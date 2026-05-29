@@ -834,6 +834,14 @@ function getType(id){return TYPES.find(t=>t.id===id)||TYPES[5]}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function safeUrl(u){return/^https?:\/\//i.test(u||'')?u:'#'}
 function mapsUrl(addr){return`https://maps.google.com/?q=${encodeURIComponent(addr)}`}
+function docChip(docs){
+  if(!docs||!docs.length)return'';
+  const n=docs.length;
+  if(n===1){
+    return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="openDoc('${docs[0].id}')" title="View document">📎 1 doc</span>`;
+  }
+  return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="switchTab('docs')" title="View ${n} documents">📎 ${n} docs</span>`;
+}
 // Document storage helpers
 function docStore(){try{return JSON.parse(localStorage.getItem('wanderer_docs')||'{}')}catch(e){return{}}}
 function docSave(d){try{localStorage.setItem('wanderer_docs',JSON.stringify(d))}catch(e){toast('Storage full — could not save document');}}
@@ -1382,7 +1390,7 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
             ${cost?`<span class="chip" style="background:#F0FDF4;color:#15803D">${cost}</span>`:''}
             ${item.confirmRef?`<span class="chip" style="background:#FFF7ED;color:#C2410C">Ref: ${esc(item.confirmRef)}</span>`:''}
             ${isAccom&&item.checkout?`<span class="chip" style="background:#F8FAFC;color:var(--muted)">→ ${fmtDate(item.checkout)}</span>`:''}
-            ${item.docs&&item.docs.length?`<span class="chip" style="background:#F5F3FF;color:#7C3AED">📎 ${item.docs.length} doc${item.docs.length!==1?'s':''}</span>`:''}
+            ${docChip(item.docs)}
           </div>
         </div>
         <div class="item-actions">
@@ -1692,6 +1700,7 @@ function renderStays(tripArg){
         </div>
         ${item.confirmRef?`<div class="stay-ref">Ref <strong>${esc(item.confirmRef)}</strong></div>`:''}
         ${item.notes?`<div style="font-size:13px;color:var(--muted);margin-top:8px">${esc(item.notes)}</div>`:''}
+        ${item.docs&&item.docs.length?`<div style="margin-top:8px">${docChip(item.docs)}</div>`:''}
         <div class="stay-actions">
           ${item.address?`<a href="${mapsUrl(item.address)}" target="_blank" class="btn btn-ghost btn-xs">🗺️ Map</a>`:''}
           ${item.url?`<a href="${esc(safeUrl(item.url))}" target="_blank" class="btn btn-ghost btn-xs">🔗 Booking</a>`:''}
@@ -1729,6 +1738,7 @@ function renderTravel(trip){
           ${item.seat?`<span class="chip" style="background:#F5F3FF;color:#7C3AED">💺 ${esc(item.seat)}</span>`:''}
           ${item.confirmRef?`<span class="chip" style="background:#FFF7ED;color:#C2410C">Ref: ${esc(item.confirmRef)}</span>`:''}
           ${item.cost?`<span class="chip" style="background:#F0FDF4;color:#15803D">${fmtCost(item.cost,item.currency)}</span>`:''}
+          ${docChip(item.docs)}
         </div>
       </div>
       <div class="travel-actions">
@@ -1770,6 +1780,7 @@ function renderEats(trip){
         </div>
         ${item.address?`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">📍 ${esc(item.address)}</div>`:''}
         ${item.confirmRef?`<div class="stay-ref" style="margin-bottom:8px">Ref <strong>${esc(item.confirmRef)}</strong></div>`:''}
+        ${item.docs&&item.docs.length?`<div style="margin-bottom:8px">${docChip(item.docs)}</div>`:''}
         <div class="eat-actions">
           ${item.address?`<a href="${mapsUrl(item.address)}" target="_blank" class="btn btn-ghost btn-xs">🗺️ Map</a>`:''}
           ${item.url?`<a href="${esc(safeUrl(item.url))}" target="_blank" class="btn btn-ghost btn-xs">🔗 Link</a>`:''}
@@ -2774,7 +2785,8 @@ async function syncPull(silent=false){
     }
 
     if(localTs&&remoteTs&&localTs>=remoteTs){
-      // Local is same age or newer — push it up (only if we actually have trips)
+      // Local is same age or newer — pull remote docs first (another device may have added them), then push
+      mergeRemoteDocs(gist);
       setSyncStatus('ok',`In sync · ${new Date().toLocaleTimeString('en-GB')}`);
       syncPush();return false;
     }
@@ -2784,7 +2796,7 @@ async function syncPull(silent=false){
       const localTime=new Date(localTs).toLocaleTimeString('en-GB');
       const remoteTime=new Date(remoteTs).toLocaleTimeString('en-GB');
       const ok=confirm(`Cloud data (${remoteTime}) is newer than this device (${localTime}).\n\nLoad the cloud version? Your local data will be replaced.`);
-      if(!ok){setSyncStatus('ok','Kept local data');syncPush();return false;}
+      if(!ok){mergeRemoteDocs(gist);setSyncStatus('ok','Kept local data');syncPush();return false;}
     }
 
     S.trips=remote.trips;
