@@ -1132,8 +1132,8 @@ function switchTab(name){
 ═══════════════════════════════════════ */
 function renderDashboard(){
   const td=today();
-  const current=S.trips.filter(t=>t.endDate>=td);
-  const past=S.trips.filter(t=>t.endDate<td);
+  const current=S.trips.filter(t=>t.endDate>=td).sort((a,b)=>(a.startDate||'').localeCompare(b.startDate||''));
+  const past=S.trips.filter(t=>t.endDate<td).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
 
   document.getElementById('dash-sub').textContent=
     S.trips.length===0?'Plan your next adventure':
