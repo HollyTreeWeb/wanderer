@@ -799,6 +799,7 @@ function today(){const d=new Date();return`${d.getFullYear()}-${String(d.getMont
 function getTrip(id){return S.trips.find(t=>t.id===id)}
 function getType(id){return TYPES.find(t=>t.id===id)||TYPES[5]}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function safeUrl(u){return/^https?:\/\//i.test(u||'')?u:'#'}
 function mapsUrl(addr){return`https://maps.google.com/?q=${encodeURIComponent(addr)}`}
 function fmtCost(c,cur){const sym=CURRENCY_SYMBOLS[cur]||cur||'';return c?`${sym}${parseFloat(c).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}`:null}
 // Returns {GBP: 200, PLN: 1500, …} — no conversion applied
@@ -1199,7 +1200,7 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
         </div>
         <div class="item-actions">
           <button class="icon-btn" onclick="openEditItem('${item.id}',${dayIdx})" title="Edit">✏️</button>
-          ${item.url?`<button class="icon-btn" onclick="window.open('${esc(item.url)}','_blank')" title="Open booking">🔗</button>`:''}
+          ${item.url?`<button class="icon-btn" onclick="window.open('${esc(safeUrl(item.url))}','_blank')" title="Open booking">🔗</button>`:''}
           ${item.address?`<button class="icon-btn" onclick="window.open('${mapsUrl(item.address)}','_blank')" title="Maps">🗺️</button>`:''}
           <button class="icon-btn del" onclick="deleteItem('${item.id}',${dayIdx})" title="Delete">🗑️</button>
         </div>
@@ -1506,7 +1507,7 @@ function renderStays(tripArg){
         ${item.notes?`<div style="font-size:13px;color:var(--muted);margin-top:8px">${esc(item.notes)}</div>`:''}
         <div class="stay-actions">
           ${item.address?`<a href="${mapsUrl(item.address)}" target="_blank" class="btn btn-ghost btn-xs">🗺️ Map</a>`:''}
-          ${item.url?`<a href="${esc(item.url)}" target="_blank" class="btn btn-ghost btn-xs">🔗 Booking</a>`:''}
+          ${item.url?`<a href="${esc(safeUrl(item.url))}" target="_blank" class="btn btn-ghost btn-xs">🔗 Booking</a>`:''}
           <button class="btn btn-ghost btn-xs" onclick="openEditItem('${item.id}',${di})">✏️ Edit</button>
         </div>
       </div>
@@ -1544,7 +1545,7 @@ function renderTravel(trip){
         </div>
       </div>
       <div class="travel-actions">
-        ${item.url?`<a href="${esc(item.url)}" target="_blank" class="icon-btn" title="Booking">🔗</a>`:''}
+        ${item.url?`<a href="${esc(safeUrl(item.url))}" target="_blank" class="icon-btn" title="Booking">🔗</a>`:''}
         <button class="icon-btn" onclick="openEditItem('${item.id}',${di})" title="Edit">✏️</button>
       </div>
     </div>`;
@@ -1584,7 +1585,7 @@ function renderEats(trip){
         ${item.confirmRef?`<div class="stay-ref" style="margin-bottom:8px">Ref <strong>${esc(item.confirmRef)}</strong></div>`:''}
         <div class="eat-actions">
           ${item.address?`<a href="${mapsUrl(item.address)}" target="_blank" class="btn btn-ghost btn-xs">🗺️ Map</a>`:''}
-          ${item.url?`<a href="${esc(item.url)}" target="_blank" class="btn btn-ghost btn-xs">🔗 Link</a>`:''}
+          ${item.url?`<a href="${esc(safeUrl(item.url))}" target="_blank" class="btn btn-ghost btn-xs">🔗 Link</a>`:''}
           <button class="btn btn-ghost btn-xs" onclick="openEditItem('${item.id}',${di})">✏️ Edit</button>
         </div>
       </div>
@@ -2341,7 +2342,7 @@ async function initDayMap(dayIdx){
         iconSize:[12,12],iconAnchor:[6,6]
       });
       L.marker([pt.lat,pt.lng],{icon}).addTo(map)
-        .bindPopup(`<b>${label}</b><br><span style="font-size:11px;color:#64748B">${addr}</span>`);
+        .bindPopup(`<b>${esc(label)}</b><br><span style="font-size:11px;color:#64748B">${esc(addr)}</span>`);
       pts.push([pt.lat,pt.lng]);
     }else{
       failedLabels.push(label);
@@ -2453,7 +2454,7 @@ async function initTripMap(trip){
         iconSize:[11,11],iconAnchor:[5.5,5.5]
       });
       L.marker([pt.lat,pt.lng],{icon}).addTo(tripMap)
-        .bindPopup(`<b>${label}</b><br><span style="font-size:11px;color:#64748B">${addr}</span>`);
+        .bindPopup(`<b>${esc(label)}</b><br><span style="font-size:11px;color:#64748B">${esc(addr)}</span>`);
       pts.push([pt.lat,pt.lng]);
     }
   }
