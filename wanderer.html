@@ -560,7 +560,7 @@ textarea{resize:vertical}
       <div class="fg"><label>Type</label><div class="type-grid" id="type-grid"></div></div>
       <div class="form-row">
         <div class="fg"><label>Title / Name</label><input type="text" id="im-name" placeholder="e.g. Shinkansen to Kyoto"></div>
-        <div class="fg"><label>Day</label><select id="im-day"></select></div>
+        <div class="fg" id="im-day-wrap"><label>Day</label><select id="im-day"></select></div>
       </div>
       <div class="form-row">
         <div class="fg"><label>Start Time</label><input type="time" id="im-time-start"></div>
@@ -1957,6 +1957,18 @@ function showExtraFields(typeId){
   ['flight','transport','accommodation','meal'].forEach(id=>{
     document.getElementById('extra-'+id).style.display=id===typeId?'block':'none';
   });
+  // For accommodation the anchor day is derived from check-in date, so hide the Day picker
+  const isAccom=typeId==='accommodation';
+  document.getElementById('im-day-wrap').style.display=isAccom?'none':'';
+  // Auto-fill check-in date from the day the modal was opened on (new items only)
+  if(isAccom&&!editItemId){
+    const trip=getTrip(S.currentTrip);
+    const checkinEl=document.getElementById('im-checkin');
+    if(trip&&itemDayIdx!=null&&!checkinEl.value){
+      const d=trip.days[itemDayIdx];
+      if(d)checkinEl.value=d.date;
+    }
+  }
 }
 
 function populateDaySelect(trip,selectedDayIdx=null){
@@ -2034,7 +2046,15 @@ function saveItem(){
   const name=document.getElementById('im-name').value.trim();
   if(!name){document.getElementById('im-name').focus();return}
   const trip=getTrip(S.currentTrip);if(!trip)return;
-  const targetDay=parseInt(document.getElementById('im-day').value);
+  let targetDay=parseInt(document.getElementById('im-day').value)||0;
+  // For accommodation, anchor to the day matching the check-in date
+  if(selType==='accommodation'){
+    const checkinDate=document.getElementById('im-checkin').value;
+    if(!checkinDate){toast('Please set a check-in date');document.getElementById('im-checkin').focus();return;}
+    const cidx=(trip.days||[]).findIndex(d=>d.date===checkinDate);
+    if(cidx>=0)targetDay=cidx;
+    // else keep current targetDay as fallback (unusual edge case)
+  }
 
   const data={
     name, type:selType,
