@@ -400,6 +400,30 @@ textarea{resize:vertical}
 .sync-status-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:8px 0}
 #sync-result{font-size:13px;margin-top:8px;min-height:18px}
 
+/* ── DOCS ── */
+.docs-wrap{max-width:860px;margin:0 auto;padding:24px 24px 60px}
+.docs-section{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+.docs-section-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.docs-section-head h3{font-size:14px;font-weight:700}
+.docs-section-body{padding:8px 18px 14px}
+.docs-group{margin-bottom:12px}
+.docs-group:last-child{margin-bottom:0}
+.docs-group-label{font-size:12px;color:var(--muted);padding:6px 0;border-bottom:1px solid #F1F5F9;margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.docs-group-day{font-weight:700;color:var(--text)}
+.doc-card{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #F1F5F9}
+.doc-card:last-child{border-bottom:none}
+.doc-card-icon{font-size:20px;flex-shrink:0}
+.doc-card-info{flex:1;min-width:0}
+.doc-card-name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc-card-sub{font-size:11.5px;color:var(--muted)}
+.doc-card-actions{display:flex;gap:5px;flex-shrink:0}
+.docs-empty{text-align:center;padding:22px 10px;color:#CBD5E1;font-size:13px;line-height:1.6}
+/* Item modal doc rows */
+.im-doc-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9}
+.im-doc-row:last-child{border-bottom:none}
+.im-doc-name{flex:1;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.im-doc-size{font-size:11px;color:var(--muted);flex-shrink:0;margin-right:4px}
+
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 </style>
@@ -448,6 +472,7 @@ textarea{resize:vertical}
     <button class="tab-btn" data-tab="stays"     onclick="switchTab('stays')">🏨 Stays</button>
     <button class="tab-btn" data-tab="travel"    onclick="switchTab('travel')">🚂 Travel</button>
     <button class="tab-btn" data-tab="eats"      onclick="switchTab('eats')">🎭 Activities</button>
+    <button class="tab-btn" data-tab="docs"      onclick="switchTab('docs')">📎 Docs</button>
   </div>
 
   <div id="tab-overview"  class="tab-panel active"></div>
@@ -456,6 +481,7 @@ textarea{resize:vertical}
   <div id="tab-stays"     class="tab-panel"></div>
   <div id="tab-travel"    class="tab-panel"></div>
   <div id="tab-eats"      class="tab-panel"></div>
+  <div id="tab-docs"      class="tab-panel"></div>
 </div>
 
 <!-- ══ MODALS ══ -->
@@ -684,6 +710,12 @@ textarea{resize:vertical}
       <div class="fg"><label>Image URL (optional)</label><input type="url" id="im-img" placeholder="https://... (photo of hotel, activity, etc.)">
         <div class="field-hint">Paste a URL to an image to illustrate this item</div>
       </div>
+      <div class="modal-section">Documents</div>
+      <div id="im-docs-list"></div>
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin-top:6px;display:inline-flex;align-items:center;gap:6px">
+        📎 Attach PDF
+        <input type="file" id="im-doc-input" accept="application/pdf" style="display:none" onchange="handleItemDocUpload(event)">
+      </label>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeItemModal()">Cancel</button>
@@ -768,6 +800,7 @@ const CURRENCY_SYMBOLS = {
 let S = {trips:[], currentTrip:null, currentTab:'overview'};
 let editTripId=null, editItemId=null, itemDayIdx=null;
 let selEmoji=EMOJIS[0], selPal=0, selType='activity', selPS=null;
+let modalDocs=[], modalDocsToDelete=[];
 
 function selPayStatus(ps){
   selPS=(selPS===ps)?null:ps; // toggle off if same
@@ -785,7 +818,7 @@ function persist(sync=true){
     if(sync)debouncedPush();
   }catch(e){}
 }
-function hydrate(){try{const r=localStorage.getItem('wanderer3');if(r)S=JSON.parse(r)}catch(e){}}
+function hydrate(){try{const r=localStorage.getItem('wanderer3');if(r)S=JSON.parse(r)}catch(e){}cleanOrphanDocs();}
 
 /* ═══════════════════════════════════════
    UTILS
@@ -801,6 +834,31 @@ function getType(id){return TYPES.find(t=>t.id===id)||TYPES[5]}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function safeUrl(u){return/^https?:\/\//i.test(u||'')?u:'#'}
 function mapsUrl(addr){return`https://maps.google.com/?q=${encodeURIComponent(addr)}`}
+// Document storage helpers
+function docStore(){try{return JSON.parse(localStorage.getItem('wanderer_docs')||'{}')}catch(e){return{}}}
+function docSave(d){try{localStorage.setItem('wanderer_docs',JSON.stringify(d))}catch(e){toast('Storage full — could not save document');}}
+function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
+function openDoc(docId){
+  const b64=docStore()[docId];
+  if(!b64){toast('Document not found — try syncing again');return;}
+  try{
+    const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+    window.open(url,'_blank');
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(e){toast('Could not open document');}
+}
+function cleanOrphanDocs(){
+  const used=new Set();
+  (S.trips||[]).forEach(t=>{
+    (t.docs||[]).forEach(d=>used.add(d.id));
+    (t.days||[]).forEach(day=>(day.items||[]).forEach(i=>(i.docs||[]).forEach(d=>used.add(d.id))));
+  });
+  const store=docStore();let changed=false;
+  Object.keys(store).forEach(id=>{if(!used.has(id)){delete store[id];changed=true;}});
+  if(changed)docSave(store);
+}
 function fmtCost(c,cur){const sym=CURRENCY_SYMBOLS[cur]||cur||'';return c?`${sym}${parseFloat(c).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}`:null}
 // Returns {GBP: 200, PLN: 1500, …} — no conversion applied
 function tripBudgetByCur(t){
@@ -858,6 +916,133 @@ function showView(name){
 
 function goHome(){S.currentTrip=null;showView('dashboard');renderDashboard()}
 
+/* ═══════════════════════════════════════
+   ITEM MODAL — DOCS
+═══════════════════════════════════════ */
+function handleItemDocUpload(event){
+  const file=event.target.files[0];if(!file)return;
+  if(file.size>8*1024*1024){toast('File too large — max 8MB per PDF');event.target.value='';return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const base64=e.target.result.split(',')[1];
+    const docId=uid();
+    const store=docStore();store[docId]=base64;docSave(store);
+    modalDocs.push({id:docId,filename:file.name,size:file.size});
+    renderModalDocs();toast('PDF attached ✓');
+  };
+  reader.onerror=()=>toast('Could not read file');
+  reader.readAsDataURL(file);
+  event.target.value='';
+}
+function deleteModalDoc(docId){
+  modalDocsToDelete.push(docId);
+  modalDocs=modalDocs.filter(d=>d.id!==docId);
+  renderModalDocs();
+}
+function renderModalDocs(){
+  const el=document.getElementById('im-docs-list');if(!el)return;
+  el.innerHTML=modalDocs.length
+    ?`<div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 12px;margin-bottom:4px">${
+        modalDocs.map(d=>`<div class="im-doc-row">
+          <span style="font-size:15px">📄</span>
+          <span class="im-doc-name" title="${esc(d.filename)}">${esc(d.filename)}</span>
+          <span class="im-doc-size">${fmtSize(d.size)}</span>
+          <button class="icon-btn" onclick="openDoc('${d.id}')" title="View">👁️</button>
+          <button class="icon-btn del" onclick="deleteModalDoc('${d.id}')" title="Remove">🗑️</button>
+        </div>`).join('')}</div>`
+    :`<div style="font-size:12px;color:var(--muted);padding:4px 0 8px">No documents attached yet</div>`;
+}
+
+/* ═══════════════════════════════════════
+   DOCUMENTS TAB
+═══════════════════════════════════════ */
+function renderDocs(trip){
+  const el=document.getElementById('tab-docs');if(!el)return;
+
+  // ── Trip-level documents ──────────────────────
+  const tDocs=trip.docs||[];
+  const tripBody=tDocs.length
+    ?tDocs.map(d=>`<div class="doc-card">
+        <div class="doc-card-icon">📄</div>
+        <div class="doc-card-info">
+          <div class="doc-card-name">${esc(d.filename)}</div>
+          <div class="doc-card-sub">${fmtSize(d.size)}</div>
+        </div>
+        <div class="doc-card-actions">
+          <button class="btn btn-ghost btn-xs" onclick="openDoc('${d.id}')">👁️ View</button>
+          <button class="icon-btn del" onclick="deleteTripDoc('${d.id}','${trip.id}')">🗑️</button>
+        </div>
+      </div>`).join('')
+    :`<div class="docs-empty">No trip documents yet<br><span style="font-size:12px">Travel insurance · Visas · Passport scans · General confirmations</span></div>`;
+
+  // ── Item documents grouped by day ─────────────
+  const groups=[];
+  (trip.days||[]).forEach((day,di)=>{
+    (day.items||[]).forEach(item=>{if(item.docs&&item.docs.length)groups.push({day,di,item});});
+  });
+  const itemBody=groups.length
+    ?groups.map(({day,di,item})=>{
+        const t=getType(item.type);
+        return`<div class="docs-group">
+          <div class="docs-group-label">
+            <span class="docs-group-day">Day ${di+1} · ${fmtDateShort(day.date)}</span>
+            <span>${t.emoji} ${esc(item.name)}</span>
+          </div>
+          ${item.docs.map(d=>`<div class="doc-card">
+            <div class="doc-card-icon">📄</div>
+            <div class="doc-card-info">
+              <div class="doc-card-name">${esc(d.filename)}</div>
+              <div class="doc-card-sub">${fmtSize(d.size)}</div>
+            </div>
+            <div class="doc-card-actions">
+              <button class="btn btn-ghost btn-xs" onclick="openDoc('${d.id}')">👁️ View</button>
+            </div>
+          </div>`).join('')}
+        </div>`;}).join('')
+    :`<div class="docs-empty">No item documents yet<br><span style="font-size:12px">Attach PDFs to flights, hotels and activities from the Itinerary tab</span></div>`;
+
+  el.innerHTML=`<div class="docs-wrap">
+    <div class="docs-section">
+      <div class="docs-section-head">
+        <h3>🗂️ Trip Documents</h3>
+        <label class="btn btn-primary btn-sm" style="cursor:pointer">📎 Add Document
+          <input type="file" accept="application/pdf" style="display:none" onchange="handleTripDocUpload(event,'${trip.id}')">
+        </label>
+      </div>
+      <div class="docs-section-body">${tripBody}</div>
+    </div>
+    <div class="docs-section">
+      <div class="docs-section-head"><h3>📋 Item Documents</h3></div>
+      <div class="docs-section-body">${itemBody}</div>
+    </div>
+  </div>`;
+}
+
+function handleTripDocUpload(event,tripId){
+  const file=event.target.files[0];if(!file)return;
+  if(file.size>8*1024*1024){toast('File too large — max 8MB');event.target.value='';return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const base64=e.target.result.split(',')[1];
+    const docId=uid();
+    const store=docStore();store[docId]=base64;docSave(store);
+    const trip=getTrip(tripId);if(!trip)return;
+    if(!trip.docs)trip.docs=[];
+    trip.docs.push({id:docId,filename:file.name,size:file.size});
+    persist();renderDocs(trip);toast('Document added ✓');
+  };
+  reader.onerror=()=>toast('Could not read file');
+  reader.readAsDataURL(file);
+  event.target.value='';
+}
+
+function deleteTripDoc(docId,tripId){
+  const trip=getTrip(tripId);if(!trip)return;
+  trip.docs=(trip.docs||[]).filter(d=>d.id!==docId);
+  const store=docStore();delete store[docId];docSave(store);
+  persist();renderDocs(trip);toast('Document removed');
+}
+
 function switchTab(name){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
@@ -870,6 +1055,7 @@ function switchTab(name){
   if(name==='stays')     renderStays(trip);
   if(name==='travel')    renderTravel(trip);
   if(name==='eats')      renderEats(trip);
+  if(name==='docs')      renderDocs(trip);
 }
 
 /* ═══════════════════════════════════════
@@ -1196,6 +1382,7 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
             ${cost?`<span class="chip" style="background:#F0FDF4;color:#15803D">${cost}</span>`:''}
             ${item.confirmRef?`<span class="chip" style="background:#FFF7ED;color:#C2410C">Ref: ${esc(item.confirmRef)}</span>`:''}
             ${isAccom&&item.checkout?`<span class="chip" style="background:#F8FAFC;color:var(--muted)">→ ${fmtDate(item.checkout)}</span>`:''}
+            ${item.docs&&item.docs.length?`<span class="chip" style="background:#F5F3FF;color:#7C3AED">📎 ${item.docs.length} doc${item.docs.length!==1?'s':''}</span>`:''}
           </div>
         </div>
         <div class="item-actions">
@@ -1719,6 +1906,7 @@ function openItemModal(dayIdx){
   document.getElementById('im-currency').value='GBP';
   document.getElementById('maps-link-hint').innerHTML='';
   selType='activity'; selPS=null; selPayStatus(null);
+  modalDocs=[];modalDocsToDelete=[];renderModalDocs();
   buildTypePicker();showExtraFields('activity');
   populateDaySelect(trip,dayIdx);
   document.getElementById('item-modal').classList.add('open');
@@ -1761,6 +1949,7 @@ function openEditItem(itemId,dayIdx){
   document.getElementById('maps-link-hint').innerHTML=addr?`<a href="${mapsUrl(addr)}" target="_blank" style="color:var(--primary)">📍 View on Google Maps</a>`:'';
   selType=item.type||'activity';
   selPS=item.payStatus||null; selPayStatus(selPS);
+  modalDocs=(item.docs||[]).map(d=>({...d}));modalDocsToDelete=[];renderModalDocs();
   buildTypePicker();showExtraFields(selType);
   populateDaySelect(trip,dayIdx);
   document.getElementById('item-modal').classList.add('open');
@@ -1801,7 +1990,16 @@ function saveItem(){
     propType:document.getElementById('im-prop-type').value,
     cuisine:document.getElementById('im-cuisine').value.trim(),
     dresscode:document.getElementById('im-dresscode').value.trim(),
+    docs:modalDocs,
   };
+
+  // Apply any doc deletions from this edit session
+  if(modalDocsToDelete.length){
+    const store=docStore();
+    modalDocsToDelete.forEach(id=>delete store[id]);
+    docSave(store);
+    modalDocsToDelete=[];
+  }
 
   if(editItemId){
     // May have moved to different day
@@ -2516,10 +2714,14 @@ async function syncPush(){
   try{
     const now=new Date().toISOString();
     const payload={trips:S.trips,updatedAt:now};
+    const docsPayload={docs:docStore(),updatedAt:now};
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
       method:'PATCH',
       headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'},
-      body:JSON.stringify({files:{'wanderer-data.json':{content:JSON.stringify(payload,null,2)}}})
+      body:JSON.stringify({files:{
+        'wanderer-data.json':{content:JSON.stringify(payload,null,2)},
+        'wanderer-docs.json':{content:JSON.stringify(docsPayload,null,2)}
+      }})
     });
     if(!res.ok)throw new Error(`GitHub ${res.status}`);
     localStorage.setItem(SYNC_TS_KEY,now);
@@ -2553,9 +2755,18 @@ async function syncPull(silent=false){
     const localTs=localStorage.getItem(SYNC_TS_KEY)||'';
     const remoteTs=remote.updatedAt||'';
 
+    // Helper: load remote docs (merge remote into local, remote wins on conflict)
+    const mergeRemoteDocs=gist=>{
+      try{
+        const rawDocs=gist.files?.['wanderer-docs.json']?.content;
+        if(rawDocs){const rd=JSON.parse(rawDocs);if(rd&&rd.docs)docSave({...docStore(),...rd.docs});}
+      }catch(e){}
+    };
+
     // If local has no trips, always load from cloud — never timestamp-compare against empty data
     if(!S.trips||S.trips.length===0){
       S.trips=remote.trips;
+      mergeRemoteDocs(gist);
       localStorage.setItem(SYNC_TS_KEY,remoteTs||new Date().toISOString());
       persist(false);
       setSyncStatus('ok',`Loaded · ${new Date().toLocaleTimeString('en-GB')}`);
@@ -2577,6 +2788,7 @@ async function syncPull(silent=false){
     }
 
     S.trips=remote.trips;
+    mergeRemoteDocs(gist);
     localStorage.setItem(SYNC_TS_KEY,remoteTs);
     persist(false);
     setSyncStatus('ok',`Loaded · ${new Date(remoteTs).toLocaleTimeString('en-GB')}`);
@@ -2639,6 +2851,8 @@ async function syncForceReload(){
     const remote=JSON.parse(raw);
     if(!Array.isArray(remote.trips)||!remote.trips.length)throw new Error('Gist contains no trips');
     S.trips=remote.trips;
+    // Also load docs
+    try{const rawDocs=gist.files?.['wanderer-docs.json']?.content;if(rawDocs){const rd=JSON.parse(rawDocs);if(rd&&rd.docs)docSave({...docStore(),...rd.docs});}}catch(e){}
     // Reset local timestamp to match remote so future syncs are clean
     const ts=remote.updatedAt||new Date().toISOString();
     localStorage.setItem(SYNC_TS_KEY,ts);
