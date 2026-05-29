@@ -1372,6 +1372,9 @@ function ovItem(item){
 function renderItinerary(trip){
   const el=document.getElementById('tab-itinerary');
   const td=today();
+  // Preserve which day cards are currently open before re-rendering
+  const openDays=new Set();
+  (trip.days||[]).forEach((_,i)=>{if(document.getElementById('dbody-'+i)?.classList.contains('open'))openDays.add(i);});
   el.innerHTML=`<div class="itin-wrap">${(trip.days||[]).map((day,i)=>{
     const items=day.items||[];
     const dayBudgetStr=fmtBudget(tripBudgetByCur({days:[day]}));
@@ -1407,6 +1410,13 @@ function renderItinerary(trip){
       </div>
     </div>`;
   }).join('')}</div>`;
+  // Restore previously-open day cards (re-render wipes the DOM, so we reapply them)
+  (trip.days||[]).forEach((_,i)=>{
+    if(openDays.has(i)){
+      document.getElementById('dbody-'+i)?.classList.add('open');
+      document.getElementById('dchev-'+i)?.classList.add('open');
+    }
+  });
 }
 
 /* ── Returns accommodation items from OTHER days whose stay spans dayDate ── */
@@ -2393,7 +2403,7 @@ function applyFXForm(tripId,containerId){
   if(anyMissing&&curs.length>0){toast('Please enter a rate for every currency');return;}
   trip.manualRates={...(trip.manualRates||{}),...rates};
   persist();
-  renderFXResult(trip,rates,containerId);
+  renderBudget(trip); // re-render the full budget so the GBP column updates
   toast('Rates saved ✓');
 }
 
