@@ -847,7 +847,7 @@ function docChip(docs){
 }
 // Document storage helpers
 function docStore(){try{return JSON.parse(localStorage.getItem('wanderer_docs')||'{}')}catch(e){return{}}}
-function docSave(d){try{localStorage.setItem('wanderer_docs',JSON.stringify(d))}catch(e){toast('Storage full — could not save document');}}
+function docSave(d){try{localStorage.setItem('wanderer_docs',JSON.stringify(d));return true;}catch(e){toast('⚠️ Storage full — could not save document. Try removing old documents first.');return false;}}
 function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
 function openDoc(docId){
   const b64=docStore()[docId];
@@ -937,7 +937,8 @@ function handleItemDocUpload(event){
   reader.onload=e=>{
     const base64=e.target.result.split(',')[1];
     const docId=uid();
-    const store=docStore();store[docId]=base64;docSave(store);
+    const store=docStore();store[docId]=base64;
+    if(!docSave(store)){event.target.value='';return;} // bail if binary didn't save
     modalDocs.push({id:docId,filename:file.name,size:file.size});
     renderModalDocs();toast('PDF attached ✓');
   };
@@ -1036,7 +1037,8 @@ function handleTripDocUpload(event,tripId){
   reader.onload=e=>{
     const base64=e.target.result.split(',')[1];
     const docId=uid();
-    const store=docStore();store[docId]=base64;docSave(store);
+    const store=docStore();store[docId]=base64;
+    if(!docSave(store)){event.target.value='';return;} // bail if binary didn't save
     const trip=getTrip(tripId);if(!trip)return;
     if(!trip.docs)trip.docs=[];
     trip.docs.push({id:docId,filename:file.name,size:file.size});
