@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta http-equiv="cache-control" content="no-cache, must-revalidate">
+<meta name="version" content="1.5">
 <title>Wanderer — Travel Planner</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -545,6 +547,7 @@ textarea{resize:vertical}
       <button class="btn btn-danger btn-sm" onclick="syncForceReload()" title="Ignore timestamps and load whatever is in the Gist right now">⬇️ Force reload from cloud</button>
       <button class="btn btn-primary" onclick="saveSyncConfig()">Save &amp; Sync now</button>
     </div>
+    <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v1.5 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
   </div>
 </div>
 
@@ -2766,18 +2769,35 @@ async function syncPull(silent=false){
     const localTs=localStorage.getItem(SYNC_TS_KEY)||'';
     const remoteTs=remote.updatedAt||'';
 
-    // Helper: load remote docs (merge remote into local, remote wins on conflict)
-    const mergeRemoteDocs=gist=>{
+    // Helper: merge remote docs into local storage — additive only (never overwrites existing local docs).
+    // Handles GitHub's 1MB truncation by falling back to raw_url for large files.
+    const mergeRemoteDocs=async gist=>{
       try{
-        const rawDocs=gist.files?.['wanderer-docs.json']?.content;
-        if(rawDocs){const rd=JSON.parse(rawDocs);if(rd&&rd.docs)docSave({...docStore(),...rd.docs});}
+        const fileInfo=gist.files?.['wanderer-docs.json'];
+        if(!fileInfo)return;
+        let rawDocs=fileInfo.content;
+        // GitHub Gist API truncates file content > 1MB — fetch the full content via raw_url
+        if(fileInfo.truncated&&fileInfo.raw_url){
+          const{token}=getSyncCfg();
+          const r=await fetch(fileInfo.raw_url,{headers:{'Authorization':`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28'}});
+          if(r.ok)rawDocs=await r.text();
+        }
+        if(!rawDocs)return;
+        const rd=JSON.parse(rawDocs);
+        if(!rd||!rd.docs)return;
+        // Only add docs we don't already have locally — never overwrite to avoid quota-eviction bugs
+        const localStore=docStore();
+        const newKeys=Object.keys(rd.docs).filter(k=>!localStore[k]);
+        if(newKeys.length===0)return;
+        newKeys.forEach(k=>localStore[k]=rd.docs[k]);
+        docSave(localStore);
       }catch(e){}
     };
 
     // If local has no trips, always load from cloud — never timestamp-compare against empty data
     if(!S.trips||S.trips.length===0){
       S.trips=remote.trips;
-      mergeRemoteDocs(gist);
+      await mergeRemoteDocs(gist);
       localStorage.setItem(SYNC_TS_KEY,remoteTs||new Date().toISOString());
       persist(false);
       setSyncStatus('ok',`Loaded · ${new Date().toLocaleTimeString('en-GB')}`);
@@ -2785,8 +2805,8 @@ async function syncPull(silent=false){
     }
 
     if(localTs&&remoteTs&&localTs>=remoteTs){
-      // Local is same age or newer — pull remote docs first (another device may have added them), then push
-      mergeRemoteDocs(gist);
+      // Local is same age or newer — pull any new remote docs first, then push
+      await mergeRemoteDocs(gist);
       setSyncStatus('ok',`In sync · ${new Date().toLocaleTimeString('en-GB')}`);
       syncPush();return false;
     }
@@ -2796,11 +2816,11 @@ async function syncPull(silent=false){
       const localTime=new Date(localTs).toLocaleTimeString('en-GB');
       const remoteTime=new Date(remoteTs).toLocaleTimeString('en-GB');
       const ok=confirm(`Cloud data (${remoteTime}) is newer than this device (${localTime}).\n\nLoad the cloud version? Your local data will be replaced.`);
-      if(!ok){mergeRemoteDocs(gist);setSyncStatus('ok','Kept local data');syncPush();return false;}
+      if(!ok){await mergeRemoteDocs(gist);setSyncStatus('ok','Kept local data');syncPush();return false;}
     }
 
     S.trips=remote.trips;
-    mergeRemoteDocs(gist);
+    await mergeRemoteDocs(gist);
     localStorage.setItem(SYNC_TS_KEY,remoteTs);
     persist(false);
     setSyncStatus('ok',`Loaded · ${new Date(remoteTs).toLocaleTimeString('en-GB')}`);
