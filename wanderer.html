@@ -548,6 +548,7 @@ textarea{resize:vertical}
       <button class="btn btn-primary" onclick="saveSyncConfig()">Save &amp; Sync now</button>
     </div>
     <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v1.5 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
+    <div id="storage-info" style="text-align:center;font-size:11px;color:var(--muted);padding-bottom:8px"></div>
   </div>
 </div>
 
@@ -1911,6 +1912,7 @@ function populateDaySelect(trip,selectedDayIdx=null){
 }
 
 function openItemModal(dayIdx){
+  cleanOrphanDocs(); // free any orphaned binaries before a new upload
   const trip=getTrip(S.currentTrip);if(!trip)return;
   editItemId=null;itemDayIdx=dayIdx!=null?dayIdx:0;
   document.getElementById('im-title').textContent='Add Item';
@@ -2846,7 +2848,24 @@ function openSyncModal(){
   document.getElementById('sync-token').value=token;
   document.getElementById('sync-result').textContent='';
   document.getElementById('sync-result').style.color='';
+  // Show storage usage
+  try{
+    const keys=['wanderer3','wanderer_docs','wanderer_geo','wanderer_fx','wanderer_sync','wanderer_ts'];
+    let total=0;const parts=[];
+    keys.forEach(k=>{const v=localStorage.getItem(k)||'';const kb=Math.round(v.length*2/1024);total+=kb;if(kb>1)parts.push(`${k.replace('wanderer_','').replace('wanderer','trips')}: ${kb}KB`);});
+    const docsKb=Math.round((localStorage.getItem('wanderer_docs')||'').length*2/1024);
+    const info=document.getElementById('storage-info');
+    if(info){
+      info.innerHTML=`Storage used: ~${total}KB / ~5000KB limit`+(docsKb>100?` · <button onclick="clearGeoCache()" style="background:none;border:none;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:11px">Clear map cache to free space</button>`:'');
+    }
+  }catch(e){}
   document.getElementById('sync-modal').classList.add('open');
+}
+function clearGeoCache(){
+  localStorage.removeItem('wanderer_geo');
+  localStorage.removeItem('wanderer_fx');
+  toast('Map cache cleared — geocoding will re-run next time you view maps');
+  openSyncModal();
 }
 function closeSyncModal(){document.getElementById('sync-modal').classList.remove('open')}
 
