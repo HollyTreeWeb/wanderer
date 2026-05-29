@@ -175,7 +175,13 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);height:56px;
 .day-foot-notes::placeholder{color:#CBD5E1}
 
 /* Day heading */
-.day-heading-input{display:block;border:none;background:transparent;font-size:13.5px;font-weight:700;color:var(--primary);font-family:inherit;outline:none;padding:3px 0 2px;width:100%;cursor:text;user-select:text}
+.day-heading-row{display:flex;align-items:center;gap:5px}
+.day-heading-text{font-size:13.5px;font-weight:700;color:var(--primary);cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.day-heading-text.empty{color:#CBD5E1;font-weight:400;font-style:italic}
+.day-heading-edit-btn{background:none;border:none;cursor:pointer;font-size:11px;padding:2px 3px;color:var(--muted);opacity:0;transition:opacity .15s;flex-shrink:0;font-family:inherit}
+.day-head:hover .day-heading-edit-btn{opacity:.7}
+.day-heading-text.empty~.day-heading-edit-btn{opacity:.5}/* always hint when no name yet */
+.day-heading-input{display:none;border:none;background:transparent;font-size:13.5px;font-weight:700;color:var(--primary);font-family:inherit;outline:none;padding:3px 0 2px;width:100%;cursor:text;user-select:text}
 .day-heading-input::placeholder{color:#CBD5E1;font-weight:400;font-style:italic}
 .day-heading-input:focus{border-bottom:1.5px solid var(--primary);margin-bottom:-1.5px}
 
@@ -1398,11 +1404,16 @@ function renderItinerary(trip){
           <div class="day-num ${isToday?'today':''}">D${i+1}</div>
           <div style="flex:1;min-width:0">
             <div class="day-label">${fmtDateShort(day.date)}${isToday?' <span style="color:#059669;font-size:11px;font-weight:600;margin-left:6px">Today</span>':''}</div>
-            <input class="day-heading-input" id="dhead-${i}"
-              value="${esc(day.heading||'')}"
-              placeholder="Name this day…"
-              onclick="event.stopPropagation()"
-              onchange="saveDayHeading(${i},this.value)">
+            <div class="day-heading-row" onclick="event.stopPropagation()">
+              <span class="day-heading-text${day.heading?'':' empty'}" id="dhead-text-${i}"
+                onclick="editDayHeading(${i})">${esc(day.heading||'Name this day…')}</span>
+              <button class="day-heading-edit-btn" onclick="editDayHeading(${i})" title="Name this day">✏️</button>
+              <input class="day-heading-input" id="dhead-${i}"
+                value="${esc(day.heading||'')}"
+                placeholder="Name this day…"
+                onblur="saveDayHeading(${i},this.value);exitDayHeadingEdit(${i})"
+                onkeydown="if(event.key==='Enter'||event.key==='Escape')this.blur()">
+            </div>
             <div class="day-sub" id="dsub-${i}">${sub}</div>
           </div>
         </div>
@@ -1544,6 +1555,27 @@ function saveDayNotes(i,v){
 
 function saveDayHeading(i,v){
   const t=getTrip(S.currentTrip);if(t&&t.days[i]){t.days[i].heading=v;persist();}
+}
+function editDayHeading(i){
+  event.stopPropagation();
+  const span=document.getElementById('dhead-text-'+i);
+  const input=document.getElementById('dhead-'+i);
+  if(!span||!input)return;
+  span.parentElement.querySelector('.day-heading-edit-btn').style.display='none';
+  span.style.display='none';
+  input.style.display='block';
+  input.focus();input.select();
+}
+function exitDayHeadingEdit(i){
+  const span=document.getElementById('dhead-text-'+i);
+  const input=document.getElementById('dhead-'+i);
+  if(!span||!input)return;
+  const v=input.value.trim();
+  span.textContent=v||'Name this day…';
+  span.className='day-heading-text'+(v?'':' empty');
+  span.style.display='';
+  span.parentElement.querySelector('.day-heading-edit-btn').style.display='';
+  input.style.display='none';
 }
 
 function refreshDayUI(i){
