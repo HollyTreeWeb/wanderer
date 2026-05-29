@@ -513,9 +513,10 @@ textarea{resize:vertical}
       </div>
       <div id="sync-result"></div>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" style="flex-wrap:wrap;gap:8px">
       <button class="btn btn-ghost" onclick="closeSyncModal()">Cancel</button>
       <button class="btn btn-ghost" onclick="testSyncConnection()">Test connection</button>
+      <button class="btn btn-danger btn-sm" onclick="syncForceReload()" title="Ignore timestamps and load whatever is in the Gist right now">⬇️ Force reload from cloud</button>
       <button class="btn btn-primary" onclick="saveSyncConfig()">Save &amp; Sync now</button>
     </div>
   </div>
@@ -2504,6 +2505,11 @@ async function syncPush(){
   const{gistId,token}=getSyncCfg();
   if(!gistId||!token)return;
   if(syncBusy)return;
+  // Safety guard: never overwrite cloud data with an empty trips list
+  if(!S.trips||S.trips.length===0){
+    setSyncStatus('idle','Nothing to push — no local trips');
+    return;
+  }
   syncBusy=true;
   setSyncStatus('syncing','Saving to cloud…');
   try{
@@ -2546,13 +2552,22 @@ async function syncPull(silent=false){
     const localTs=localStorage.getItem(SYNC_TS_KEY)||'';
     const remoteTs=remote.updatedAt||'';
 
+    // If local has no trips, always load from cloud — never timestamp-compare against empty data
+    if(!S.trips||S.trips.length===0){
+      S.trips=remote.trips;
+      localStorage.setItem(SYNC_TS_KEY,remoteTs||new Date().toISOString());
+      persist(false);
+      setSyncStatus('ok',`Loaded · ${new Date().toLocaleTimeString('en-GB')}`);
+      return true;
+    }
+
     if(localTs&&remoteTs&&localTs>=remoteTs){
-      // Local is same age or newer — push it up
+      // Local is same age or newer — push it up (only if we actually have trips)
       setSyncStatus('ok',`In sync · ${new Date().toLocaleTimeString('en-GB')}`);
       syncPush();return false;
     }
 
-    // Remote is newer — ask user if data exists locally already
+    // Remote is newer — ask user before replacing local data
     if(S.trips.length>0&&localTs){
       const localTime=new Date(localTs).toLocaleTimeString('en-GB');
       const remoteTime=new Date(remoteTs).toLocaleTimeString('en-GB');
@@ -2562,9 +2577,9 @@ async function syncPull(silent=false){
 
     S.trips=remote.trips;
     localStorage.setItem(SYNC_TS_KEY,remoteTs);
-    persist(false); // save locally, don't re-push
+    persist(false);
     setSyncStatus('ok',`Loaded · ${new Date(remoteTs).toLocaleTimeString('en-GB')}`);
-    return true; // caller should re-render
+    return true;
   }catch(e){
     setSyncStatus('error',`Load failed — ${e.message}`);
     return false;
@@ -2606,7 +2621,38 @@ async function testSyncConnection(){
   }catch(e){out.style.color='#DC2626';out.textContent=`⚠️ ${e.message}`;}
 }
 
-// Save credentials and do an immediate push
+// Force reload from cloud — ignores timestamps entirely, used for manual recovery
+async function syncForceReload(){
+  const{gistId,token}=getSyncCfg();
+  if(!gistId||!token){toast('Sync not configured');return;}
+  if(!confirm('This will replace ALL local trip data with whatever is currently in your Gist. Continue?'))return;
+  setSyncStatus('syncing','Loading from cloud…');
+  try{
+    const res=await fetch(`https://api.github.com/gists/${gistId}`,{
+      headers:{'Authorization':`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28'}
+    });
+    if(!res.ok)throw new Error(`GitHub ${res.status}`);
+    const gist=await res.json();
+    const raw=gist.files?.['wanderer-data.json']?.content;
+    if(!raw)throw new Error('No data found in Gist');
+    const remote=JSON.parse(raw);
+    if(!Array.isArray(remote.trips)||!remote.trips.length)throw new Error('Gist contains no trips');
+    S.trips=remote.trips;
+    // Reset local timestamp to match remote so future syncs are clean
+    const ts=remote.updatedAt||new Date().toISOString();
+    localStorage.setItem(SYNC_TS_KEY,ts);
+    persist(false);
+    closeSyncModal();
+    renderDashboard();
+    setSyncStatus('ok',`Loaded · ${new Date().toLocaleTimeString('en-GB')}`);
+    toast('Trips restored from cloud ✓');
+  }catch(e){
+    setSyncStatus('error',`Failed: ${e.message}`);
+    toast(`Could not load: ${e.message}`);
+  }
+}
+
+// Save credentials — pull first so a new device never overwrites existing cloud data
 async function saveSyncConfig(){
   const gistId=document.getElementById('sync-gist-id').value.trim();
   const token=document.getElementById('sync-token').value.trim();
@@ -2615,7 +2661,11 @@ async function saveSyncConfig(){
   saveSyncCfg({gistId,token});
   closeSyncModal();
   toast('Sync configured ✓');
-  await syncPush();
+  // Pull first — if remote has data, load it (safe for new device setup)
+  // Only push if remote is empty or local data is confirmed newer
+  const loaded=await syncPull(false);
+  if(loaded){renderDashboard();}
+  else if(S.trips.length>0){await syncPush();}
 }
 
 /* ═══════════════════════════════════════
