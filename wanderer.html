@@ -189,6 +189,10 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);height:56px;
 .stay-ref-badge.checkin{background:#ECFDF5;color:#059669}
 .stay-ref-badge.checkout{background:#FFF7ED;color:#C2410C}
 .stay-ref-badge.staying{background:#F5F3FF;color:#7C3AED}
+.stay-ref-badge.car-hired{background:#EFF6FF;color:#2563EB}
+.stay-ref-badge.car-returned{background:#FEF3C7;color:#D97706}
+.stay-ref-badge.parking-start{background:#F0FDF4;color:#15803D}
+.stay-ref-badge.parking-end{background:#FFF7ED;color:#C2410C}
 
 /* FAB */
 .fab{position:fixed;bottom:28px;right:28px;background:var(--primary);color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:700;font-family:inherit;padding:12px 22px;border-radius:100px;box-shadow:0 4px 20px rgba(37,99,235,.45);display:none;align-items:center;gap:8px;z-index:150;transition:all .2s;letter-spacing:-.1px}
@@ -580,12 +584,13 @@ textarea{resize:vertical}
         <div class="modal-section">Transport Details</div>
         <div class="form-row">
           <div class="fg"><label>Transport Type</label>
-            <select id="im-transport-type">
+            <select id="im-transport-type" onchange="onTransportTypeChange()">
               <option value="train">Train / Rail</option>
               <option value="bus">Bus / Coach</option>
               <option value="ferry">Ferry / Boat</option>
               <option value="taxi">Taxi / Rideshare</option>
               <option value="car">Car Hire</option>
+              <option value="parking">Airport Parking</option>
               <option value="other">Other</option>
             </select>
           </div>
@@ -594,6 +599,13 @@ textarea{resize:vertical}
         <div class="form-row">
           <div class="fg"><label>From</label><input type="text" id="im-from-loc" placeholder="Departure station/stop"></div>
           <div class="fg"><label>To</label><input type="text" id="im-to-loc" placeholder="Arrival station/stop"></div>
+        </div>
+        <!-- Date range — shown for Car Hire and Airport Parking only -->
+        <div id="im-transport-dates" style="display:none">
+          <div class="form-row">
+            <div class="fg"><label id="im-transport-start-label">Pickup Date</label><input type="date" id="im-transport-start"></div>
+            <div class="fg"><label id="im-transport-end-label">Return Date</label><input type="date" id="im-transport-end"></div>
+          </div>
         </div>
       </div>
       <div class="extra-fields" id="extra-accommodation" style="display:none">
@@ -1424,12 +1436,24 @@ function getStayRefsForDay(trip, dayDate, ownItemIds){
   const skip=new Set(ownItemIds);
   const refs=[];
   (trip.days||[]).forEach(d=>{
-    (d.items||[]).filter(i=>i.type==='accommodation'&&!skip.has(i.id)).forEach(item=>{
-      const checkin=item.checkin||d.date;   // explicit check-in date, or the day it lives on
+    (d.items||[]).filter(i=>!skip.has(i.id)).forEach(item=>{
+      const isAccom=item.type==='accommodation';
+      const isCar=item.type==='transport'&&item.transportType==='car';
+      const isParking=item.type==='transport'&&item.transportType==='parking';
+      if(!isAccom&&!isCar&&!isParking)return;
+      const checkin=item.checkin||d.date;
       const checkout=item.checkout;
-      if(!checkout||checkin===dayDate)return; // no checkout set, or this IS the checkin day
+      if(!checkout||checkin===dayDate)return; // no end date, or this IS the start day
       if(checkin<dayDate&&dayDate<=checkout){
-        refs.push({item, refType: dayDate===checkout?'checkout':'staying'});
+        if(isAccom){
+          refs.push({item,refType:dayDate===checkout?'checkout':'staying'});
+        }else if(isCar){
+          // Car hire: reference on every intermediate and return day
+          refs.push({item,refType:dayDate===checkout?'car-returned':'car-hired'});
+        }else if(isParking){
+          // Airport parking: only show on the collection day, not intermediate days
+          if(dayDate===checkout)refs.push({item,refType:'parking-end'});
+        }
       }
     });
   });
@@ -1444,9 +1468,14 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
       const t=getType(item.type);
       const cost=fmtCost(item.cost,item.currency);
       const details=[item.vendor,item.fromLoc&&item.toLoc?`${item.fromLoc} → ${item.toLoc}`:null].filter(Boolean).join(' · ');
-      // Check-in / check-out badges for accommodation items
+      // Multi-day spanning badges for accommodation, car hire, and parking
       const isAccom=item.type==='accommodation';
-      const checkinBadge=isAccom?`<span class="stay-ref-badge checkin">Check-in</span>`:'';
+      const isCar=item.type==='transport'&&item.transportType==='car';
+      const isParking=item.type==='transport'&&item.transportType==='parking';
+      const checkinBadge=isAccom?`<span class="stay-ref-badge checkin">Check-in</span>`
+        :isCar?`<span class="stay-ref-badge car-hired">🚗 Car hired</span>`
+        :isParking?`<span class="stay-ref-badge parking-start">🅿️ Drop-off</span>`
+        :'';
       return`<div class="item-row" draggable="true" data-item-id="${item.id}" data-day="${dayIdx}"
         ondragstart="onDragStart(event,'${item.id}',${dayIdx})">
         <div class="drag-handle">⠿</div>
@@ -1460,7 +1489,7 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
             <span class="chip" style="background:${t.bg};color:${t.color}">${t.emoji} ${t.label}</span>
             ${cost?`<span class="chip" style="background:#F0FDF4;color:#15803D">${cost}</span>`:''}
             ${item.confirmRef?`<span class="chip" style="background:#FFF7ED;color:#C2410C">Ref: ${esc(item.confirmRef)}</span>`:''}
-            ${isAccom&&item.checkout?`<span class="chip" style="background:#F8FAFC;color:var(--muted)">→ ${fmtDate(item.checkout)}</span>`:''}
+            ${(isAccom||isCar||isParking)&&item.checkout?`<span class="chip" style="background:#F8FAFC;color:var(--muted)">→ ${fmtDate(item.checkout)}</span>`:''}
             ${docChip(item.docs)}
           </div>
         </div>
@@ -1475,24 +1504,31 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
 
   const makeRefRow=({item,refType})=>{
     const badge={
-      staying:`<span class="stay-ref-badge staying">Staying</span>`,
-      checkout:`<span class="stay-ref-badge checkout">Check-out</span>`,
+      staying:      `<span class="stay-ref-badge staying">Staying</span>`,
+      checkout:     `<span class="stay-ref-badge checkout">Check-out</span>`,
+      'car-hired':  `<span class="stay-ref-badge car-hired">🚗 Car hired</span>`,
+      'car-returned':`<span class="stay-ref-badge car-returned">🚗 Car returned</span>`,
+      'parking-end':`<span class="stay-ref-badge parking-end">🅿️ Car collected</span>`,
     }[refType]||'';
+    const icon=item.transportType==='car'?'🚗':item.transportType==='parking'?'🅿️':'🏨';
     return`<div class="stay-ref-row">
       <div style="width:14px;flex-shrink:0"></div><!-- spacer for drag handle -->
       <div style="width:38px;flex-shrink:0"></div><!-- spacer for time -->
-      <div class="stay-ref-icon">🏨</div>
+      <div class="stay-ref-icon">${icon}</div>
       <div class="stay-ref-content">
         <div class="stay-ref-title">${badge}${esc(item.name)}${item.vendor?` <span style="font-weight:400">· ${esc(item.vendor)}</span>`:''}</div>
       </div>
     </div>`;
   };
 
-  const checkoutHTML=stayRefs.filter(r=>r.refType==='checkout').map(makeRefRow).join('');
-  const stayingHTML=stayRefs.filter(r=>r.refType==='staying').map(makeRefRow).join('');
+  // Collect all ref types for ordering: departures/returns first, staying/hired at bottom
+  const endRefs=stayRefs.filter(r=>['checkout','car-returned','parking-end'].includes(r.refType));
+  const midRefs=stayRefs.filter(r=>['staying','car-hired'].includes(r.refType));
+  const endHTML=endRefs.map(makeRefRow).join('');
+  const midHTML=midRefs.map(makeRefRow).join('');
 
-  if(!primaryHTML&&!checkoutHTML&&!stayingHTML)return`<div class="item-empty">No items — add flights, hotels, activities…</div>`;
-  return checkoutHTML+primaryHTML+stayingHTML;
+  if(!primaryHTML&&!endHTML&&!midHTML)return`<div class="item-empty">No items — add flights, hotels, activities…</div>`;
+  return endHTML+primaryHTML+midHTML;
 }
 
 function toggleDay(i){
@@ -1979,6 +2015,32 @@ function showExtraFields(typeId){
       if(d)checkinEl.value=d.date;
     }
   }
+  // For transport, update date-range section and day-selector visibility
+  if(typeId==='transport')onTransportTypeChange();
+}
+
+function onTransportTypeChange(){
+  const tt=document.getElementById('im-transport-type').value;
+  const isMultiDay=tt==='car'||tt==='parking';
+  document.getElementById('im-transport-dates').style.display=isMultiDay?'block':'none';
+  document.getElementById('im-day-wrap').style.display=isMultiDay?'none':'';
+  // Update labels to match transport type
+  if(tt==='parking'){
+    document.getElementById('im-transport-start-label').textContent='Drop-off Date';
+    document.getElementById('im-transport-end-label').textContent='Collection Date';
+  }else{
+    document.getElementById('im-transport-start-label').textContent='Pickup Date';
+    document.getElementById('im-transport-end-label').textContent='Return Date';
+  }
+  // Auto-fill start date from the day the modal was opened (new items only)
+  if(isMultiDay&&!editItemId){
+    const trip=getTrip(S.currentTrip);
+    const startEl=document.getElementById('im-transport-start');
+    if(trip&&itemDayIdx!=null&&!startEl.value){
+      const d=trip.days[itemDayIdx];
+      if(d)startEl.value=d.date;
+    }
+  }
 }
 
 function populateDaySelect(trip,selectedDayIdx=null){
@@ -1995,7 +2057,7 @@ function openItemModal(dayIdx){
   document.getElementById('im-title').textContent='Add Item';
   document.getElementById('im-save-btn').textContent='Add Item';
   ['im-name','im-time-start','im-time-end','im-vendor','im-ref','im-address','im-url','im-cost','im-notes','im-img',
-   'im-flight-no','im-from-airport','im-to-airport','im-from-loc','im-to-loc','im-seat','im-room-type','im-checkin','im-checkout','im-cuisine','im-dresscode'].forEach(id=>{
+   'im-flight-no','im-from-airport','im-to-airport','im-from-loc','im-to-loc','im-seat','im-room-type','im-checkin','im-checkout','im-transport-start','im-transport-end','im-cuisine','im-dresscode'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.value='';
   });
   document.getElementById('im-currency').value='GBP';
@@ -2036,6 +2098,11 @@ function openEditItem(itemId,dayIdx){
   document.getElementById('im-room-type').value=item.roomType||'';
   document.getElementById('im-checkin').value=item.checkin||'';
   document.getElementById('im-checkout').value=item.checkout||'';
+  // Pre-fill transport date range for car hire / parking
+  if(item.type==='transport'&&(item.transportType==='car'||item.transportType==='parking')){
+    document.getElementById('im-transport-start').value=item.checkin||'';
+    document.getElementById('im-transport-end').value=item.checkout||'';
+  }
   if(item.propType)document.getElementById('im-prop-type').value=item.propType;
   document.getElementById('im-cuisine').value=item.cuisine||'';
   document.getElementById('im-dresscode').value=item.dresscode||'';
@@ -2045,7 +2112,7 @@ function openEditItem(itemId,dayIdx){
   selType=item.type||'activity';
   selPS=item.payStatus||null; selPayStatus(selPS);
   modalDocs=(item.docs||[]).map(d=>({...d}));modalDocsToDelete=[];renderModalDocs();
-  buildTypePicker();showExtraFields(selType);
+  buildTypePicker();showExtraFields(selType); // also calls onTransportTypeChange for transport items
   populateDaySelect(trip,dayIdx);
   document.getElementById('item-modal').classList.add('open');
 }
@@ -2057,13 +2124,20 @@ function saveItem(){
   if(!name){document.getElementById('im-name').focus();return}
   const trip=getTrip(S.currentTrip);if(!trip)return;
   let targetDay=parseInt(document.getElementById('im-day').value)||0;
-  // For accommodation, anchor to the day matching the check-in date
+  const selTransportType=document.getElementById('im-transport-type').value;
+  const isTransportMultiDay=selType==='transport'&&(selTransportType==='car'||selTransportType==='parking');
+  // For accommodation and multi-day transport, anchor to the start date
   if(selType==='accommodation'){
     const checkinDate=document.getElementById('im-checkin').value;
     if(!checkinDate){toast('Please set a check-in date');document.getElementById('im-checkin').focus();return;}
     const cidx=(trip.days||[]).findIndex(d=>d.date===checkinDate);
     if(cidx>=0)targetDay=cidx;
-    // else keep current targetDay as fallback (unusual edge case)
+  }else if(isTransportMultiDay){
+    const startDate=document.getElementById('im-transport-start').value;
+    const label=selTransportType==='parking'?'drop-off date':'pickup date';
+    if(!startDate){toast(`Please set a ${label}`);document.getElementById('im-transport-start').focus();return;}
+    const cidx=(trip.days||[]).findIndex(d=>d.date===startDate);
+    if(cidx>=0)targetDay=cidx;
   }
 
   const data={
@@ -2088,8 +2162,8 @@ function saveItem(){
     seat:document.getElementById('im-seat').value.trim(),
     transportType:document.getElementById('im-transport-type').value,
     roomType:document.getElementById('im-room-type').value.trim(),
-    checkin:document.getElementById('im-checkin').value,
-    checkout:document.getElementById('im-checkout').value,
+    checkin:isTransportMultiDay?document.getElementById('im-transport-start').value:document.getElementById('im-checkin').value,
+    checkout:isTransportMultiDay?document.getElementById('im-transport-end').value:document.getElementById('im-checkout').value,
     propType:document.getElementById('im-prop-type').value,
     cuisine:document.getElementById('im-cuisine').value.trim(),
     dresscode:document.getElementById('im-dresscode').value.trim(),
@@ -2127,7 +2201,7 @@ function saveItem(){
       if(targetDay!==itemDayIdx)refreshDayUI(targetDay);
       // If we just updated an accommodation item, also refresh any other days that
       // may show it as a stay reference (rebuild all stay-ref rows is simpler than patching)
-      if(data.type==='accommodation') refreshAllDayRefs(trip);
+      if(data.type==='accommodation'||isTransportMultiDay) refreshAllDayRefs(trip);
     }else switchTab(S.currentTab);
   }else{
     data.id=uid();
@@ -2140,7 +2214,7 @@ function saveItem(){
       if(body&&!body.classList.contains('open')){body.classList.add('open');document.getElementById('dchev-'+targetDay).classList.add('open')}
       refreshDayUI(targetDay);
       // Refresh all other days' stay-ref rows if it's an accommodation item
-      if(data.type==='accommodation') refreshAllDayRefs(trip);
+      if(data.type==='accommodation'||isTransportMultiDay) refreshAllDayRefs(trip);
     }else switchTab(S.currentTab);
     // Proactively keep stays tab data fresh even when not on that tab
     if(data.type==='accommodation'&&S.currentTab!=='stays') renderStays(trip);
