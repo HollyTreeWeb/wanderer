@@ -846,9 +846,64 @@ function docChip(docs){
   }
   return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="switchTab('docs')" title="View ${n} documents">📎 ${n} docs</span>`;
 }
-// Document storage helpers
-function docStore(){try{return JSON.parse(localStorage.getItem('wanderer_docs')||'{}')}catch(e){return{}}}
-function docSave(d){try{localStorage.setItem('wanderer_docs',JSON.stringify(d));return true;}catch(e){toast('⚠️ Storage full — could not save document. Try removing old documents first.');return false;}}
+// ── Document storage — IndexedDB (no size limit, unlike localStorage) ──
+let _docCache=null; // in-memory mirror; null until initDocStore() completes
+let _idb=null;
+
+function initDocStore(){
+  return new Promise(resolve=>{
+    try{
+      const req=indexedDB.open('wanderer_idb',1);
+      req.onupgradeneeded=e=>e.target.result.createObjectStore('docs');
+      req.onerror=()=>{_docCache={};resolve();};
+      req.onsuccess=e=>{
+        _idb=e.target.result;
+        // Load all existing docs into memory
+        const tx=_idb.transaction('docs','readonly');
+        const st=tx.objectStore('docs');
+        const result={};
+        st.openCursor().onsuccess=ev=>{
+          const c=ev.target.result;
+          if(c){result[c.key]=c.value;c.continue();}
+        };
+        tx.oncomplete=()=>{
+          if(Object.keys(result).length>0){
+            _docCache=result;resolve();
+          }else{
+            // Migrate any legacy localStorage docs into IDB
+            try{
+              const legacy=JSON.parse(localStorage.getItem('wanderer_docs')||'{}');
+              const ids=Object.keys(legacy);
+              if(ids.length>0){
+                const mtx=_idb.transaction('docs','readwrite');
+                const mst=mtx.objectStore('docs');
+                ids.forEach(k=>mst.put(legacy[k],k));
+                mtx.oncomplete=()=>{localStorage.removeItem('wanderer_docs');_docCache=legacy;resolve();};
+                mtx.onerror=()=>{_docCache=legacy;resolve();};
+              }else{_docCache={};resolve();}
+            }catch(e){_docCache={};resolve();}
+          }
+        };
+        tx.onerror=()=>{_docCache={};resolve();};
+      };
+    }catch(e){_docCache={};resolve();}
+  });
+}
+
+function docStore(){return _docCache||{};}
+
+function docSave(d){
+  _docCache=d;
+  if(_idb){
+    try{
+      const tx=_idb.transaction('docs','readwrite');
+      const st=tx.objectStore('docs');
+      st.clear();
+      Object.keys(d).forEach(k=>st.put(d[k],k));
+    }catch(e){}
+  }
+  return true; // IDB never hits localStorage quota
+}
 function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
 function openDoc(docId){
   const b64=docStore()[docId];
@@ -2848,15 +2903,16 @@ function openSyncModal(){
   document.getElementById('sync-token').value=token;
   document.getElementById('sync-result').textContent='';
   document.getElementById('sync-result').style.color='';
-  // Show storage usage
+  // Show storage usage (docs now in IndexedDB, only meta + cache in localStorage)
   try{
-    const keys=['wanderer3','wanderer_docs','wanderer_geo','wanderer_fx','wanderer_sync','wanderer_ts'];
-    let total=0;const parts=[];
-    keys.forEach(k=>{const v=localStorage.getItem(k)||'';const kb=Math.round(v.length*2/1024);total+=kb;if(kb>1)parts.push(`${k.replace('wanderer_','').replace('wanderer','trips')}: ${kb}KB`);});
-    const docsKb=Math.round((localStorage.getItem('wanderer_docs')||'').length*2/1024);
+    const keys=['wanderer3','wanderer_geo','wanderer_fx','wanderer_sync','wanderer_ts'];
+    let total=0;
+    keys.forEach(k=>{const v=localStorage.getItem(k)||'';total+=Math.round(v.length*2/1024);});
+    const geoKb=Math.round((localStorage.getItem('wanderer_geo')||'').length*2/1024);
+    const docCount=Object.keys(_docCache||{}).length;
     const info=document.getElementById('storage-info');
     if(info){
-      info.innerHTML=`Storage used: ~${total}KB / ~5000KB limit`+(docsKb>100?` · <button onclick="clearGeoCache()" style="background:none;border:none;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:11px">Clear map cache to free space</button>`:'');
+      info.innerHTML=`Trip data: ~${total}KB · Docs: ${docCount} file${docCount!==1?'s':''} in IndexedDB`+(geoKb>200?` · <button onclick="clearGeoCache()" style="background:none;border:none;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:11px">Clear map cache (${geoKb}KB)</button>`:'');
     }
   }catch(e){}
   document.getElementById('sync-modal').classList.add('open');
@@ -2955,15 +3011,18 @@ document.querySelectorAll('.overlay').forEach(el=>{
 /* ═══════════════════════════════════════
    BOOT
 ═══════════════════════════════════════ */
-hydrate();
-showView('dashboard');
-renderDashboard();
-if(!S.trips.length){
-  document.getElementById('grid-current').innerHTML=`<div class="empty-wrap"><span class="be">🌍</span><h2>No trips yet</h2><p>Hit "+ New Trip" to start planning your first adventure!</p><button class="btn btn-primary" onclick="openTripModal()">+ Plan a Trip</button></div>`;
-}
-// On load: pull from cloud (silent=true so no spinner on first open)
-// Re-render dashboard if cloud had newer data
-syncPull(true).then(loaded=>{if(loaded){renderDashboard();}});
+(async()=>{
+  await initDocStore(); // must finish before hydrate so cleanOrphanDocs sees the IDB cache
+  hydrate();
+  showView('dashboard');
+  renderDashboard();
+  if(!S.trips.length){
+    document.getElementById('grid-current').innerHTML=`<div class="empty-wrap"><span class="be">🌍</span><h2>No trips yet</h2><p>Hit "+ New Trip" to start planning your first adventure!</p><button class="btn btn-primary" onclick="openTripModal()">+ Plan a Trip</button></div>`;
+  }
+  // On load: pull from cloud (silent=true so no spinner on first open)
+  const loaded=await syncPull(true);
+  if(loaded)renderDashboard();
+})();
 </script>
 </body>
 </html>
