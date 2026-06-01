@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta http-equiv="cache-control" content="no-cache, must-revalidate">
-<meta name="version" content="1.6">
+<meta name="version" content="1.7">
 <title>Wanderer — Travel Planner</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -2912,7 +2912,7 @@ function setSyncStatus(state,msg){
 async function syncPush(){
   const{gistId,token}=getSyncCfg();
   if(!gistId||!token)return;
-  if(syncBusy)return;
+  if(syncBusy){syncTimer=setTimeout(syncPush,1500);return;}// retry once busy clears
   // Safety guard: never overwrite cloud data with an empty trips list
   if(!S.trips||S.trips.length===0){
     setSyncStatus('idle','Nothing to push — no local trips');
@@ -3006,10 +3006,10 @@ async function syncPull(silent=false){
       syncPush();return false;
     }
 
-    // Remote is newer — ask user before replacing local data
-    if(S.trips.length>0&&localTs){
-      const localTime=new Date(localTs).toLocaleTimeString('en-GB');
-      const remoteTime=new Date(remoteTs).toLocaleTimeString('en-GB');
+    // Remote is newer — always ask before replacing local data if we have any trips
+    if(S.trips.length>0){
+      const localTime=localTs?new Date(localTs).toLocaleTimeString('en-GB'):'unknown';
+      const remoteTime=remoteTs?new Date(remoteTs).toLocaleTimeString('en-GB'):'unknown';
       const ok=confirm(`Cloud data (${remoteTime}) is newer than this device (${localTime}).\n\nLoad the cloud version? Your local data will be replaced.`);
       if(!ok){await mergeRemoteDocs(gist);setSyncStatus('ok','Kept local data');syncPush();return false;}
     }
