@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta http-equiv="cache-control" content="no-cache, must-revalidate">
-<meta name="version" content="1.7">
+<meta name="version" content="1.9">
 <title>Wanderer — Travel Planner</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -833,12 +833,31 @@ function selPayStatus(ps){
 }
 
 function persist(sync=true){
-  try{
-    localStorage.setItem('wanderer3',JSON.stringify(S));
-    // Track when local data was last written so sync can detect conflicts
-    if(sync)localStorage.setItem(SYNC_TS_KEY,new Date().toISOString());
-    if(sync)debouncedPush();
-  }catch(e){}
+  const data=JSON.stringify(S);
+  let saved=false;
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      localStorage.setItem('wanderer3',data);
+      saved=true;break;
+    }catch(e){
+      if(attempt===0){
+        // First evict regenerable caches and retry
+        localStorage.removeItem('wanderer_geo');
+        localStorage.removeItem('wanderer_fx');
+        console.warn('[Wanderer] localStorage quota hit — evicted caches, retrying');
+      }else if(attempt===1){
+        // Second try: also clear any other wanderer keys except essential ones
+        Object.keys(localStorage).filter(k=>k.startsWith('wanderer')&&k!=='wanderer3'&&k!=='wanderer_sync').forEach(k=>localStorage.removeItem(k));
+        console.warn('[Wanderer] Still over quota — cleared all caches, retrying');
+      }else{
+        console.error('[Wanderer] persist() FAILED after cache eviction:',e);
+        toast('⚠️ Storage full — some data may not be saved. Try the cloud sync button to save your data.');
+      }
+    }
+  }
+  if(!saved)return;
+  if(sync){const ts=new Date().toISOString();localStorage.setItem(SYNC_TS_KEY,ts);console.log('[Wanderer sync] persist() — trips:',S.trips?.length,'ts:',ts);}
+  if(sync)debouncedPush();
 }
 function hydrate(){try{const r=localStorage.getItem('wanderer3');if(r)S=JSON.parse(r)}catch(e){}cleanOrphanDocs();}
 
@@ -2547,8 +2566,14 @@ async function renderFXSection(tripId,containerId){
 const GEO_KEY='wanderer_geo';
 let geoQueue=[],geoRunning=false;
 
+const GEO_MAX_ENTRIES=200; // cap cache to avoid filling localStorage quota
 function geoCache(){try{return JSON.parse(localStorage.getItem(GEO_KEY)||'{}')}catch(e){return{}}}
-function geoSave(c){try{localStorage.setItem(GEO_KEY,JSON.stringify(c))}catch(e){}}
+function geoSave(c){
+  // If over the cap, drop the oldest entries (object key order approximates insertion order)
+  const keys=Object.keys(c);
+  if(keys.length>GEO_MAX_ENTRIES){keys.slice(0,keys.length-GEO_MAX_ENTRIES).forEach(k=>delete c[k]);}
+  try{localStorage.setItem(GEO_KEY,JSON.stringify(c))}catch(e){}
+}
 
 function geocode(address){
   return new Promise(resolve=>{
@@ -2922,6 +2947,7 @@ async function syncPush(){
   setSyncStatus('syncing','Saving to cloud…');
   try{
     const now=new Date().toISOString();
+    console.log('[Wanderer sync] syncPush() — pushing trips:',S.trips?.length,'at:',now);
     const payload={trips:S.trips,updatedAt:now};
     const docsPayload={docs:docStore(),updatedAt:now};
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
@@ -2947,6 +2973,7 @@ async function syncPull(silent=false){
   const{gistId,token}=getSyncCfg();
   if(!gistId||!token){setSyncStatus('idle','Cloud sync not configured — click to set up');return false;}
   if(!silent)setSyncStatus('syncing','Loading from cloud…');
+  console.log('[Wanderer sync] syncPull start — localTrips:',S.trips?.length,'localTs:',localStorage.getItem(SYNC_TS_KEY));
   try{
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
       headers:{'Authorization':`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28'}
@@ -2955,14 +2982,19 @@ async function syncPull(silent=false){
     const gist=await res.json();
     const raw=gist.files?.['wanderer-data.json']?.content;
     if(!raw||raw.trim()==='{}'){
+      console.log('[Wanderer sync] Remote empty — pushing local');
       setSyncStatus('ok','No remote data yet — pushing local data');
       syncPush();return false;
     }
     const remote=JSON.parse(raw);
-    if(!Array.isArray(remote.trips)){setSyncStatus('ok','Remote empty');syncPush();return false;}
+    if(!Array.isArray(remote.trips)){
+      console.log('[Wanderer sync] Remote trips not an array — pushing local');
+      setSyncStatus('ok','Remote empty');syncPush();return false;
+    }
 
     const localTs=localStorage.getItem(SYNC_TS_KEY)||'';
     const remoteTs=remote.updatedAt||'';
+    console.log('[Wanderer sync] localTs:',localTs,'remoteTs:',remoteTs,'remoteTrips:',remote.trips.length,'localTrips:',S.trips?.length);
 
     // Helper: merge remote docs into local storage — additive only (never overwrites existing local docs).
     // Handles GitHub's 1MB truncation by falling back to raw_url for large files.
@@ -3001,12 +3033,14 @@ async function syncPull(silent=false){
 
     if(localTs&&remoteTs&&localTs>=remoteTs){
       // Local is same age or newer — pull any new remote docs first, then push
+      console.log('[Wanderer sync] Local in sync or newer — pushing');
       await mergeRemoteDocs(gist);
       setSyncStatus('ok',`In sync · ${new Date().toLocaleTimeString('en-GB')}`);
       syncPush();return false;
     }
 
     // Remote is newer — always ask before replacing local data if we have any trips
+    console.log('[Wanderer sync] Remote is newer — localTrips:',S.trips?.length,'will confirm?',S.trips?.length>0);
     if(S.trips.length>0){
       const localTime=localTs?new Date(localTs).toLocaleTimeString('en-GB'):'unknown';
       const remoteTime=remoteTs?new Date(remoteTs).toLocaleTimeString('en-GB'):'unknown';
@@ -3014,6 +3048,7 @@ async function syncPull(silent=false){
       if(!ok){await mergeRemoteDocs(gist);setSyncStatus('ok','Kept local data');syncPush();return false;}
     }
 
+    console.log('[Wanderer sync] Loading remote trips:',remote.trips.length);
     S.trips=remote.trips;
     await mergeRemoteDocs(gist);
     localStorage.setItem(SYNC_TS_KEY,remoteTs);
