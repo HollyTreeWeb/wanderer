@@ -489,7 +489,7 @@ textarea{resize:vertical}
 <nav>
   <div class="brand" onclick="goHome()"><span class="logo">✈️</span> Wanderer</div>
   <div class="nav-right">
-    <button class="btn btn-ghost btn-sm" id="imports-btn" style="display:none" onclick="openImports()" title="Review imported emails">📥 Imports <span class="imports-badge" id="imports-count">0</span></button>
+    <button class="btn btn-ghost btn-sm" id="imports-btn" onclick="openImports()" title="Review imported emails">📥 Imports <span class="imports-badge" id="imports-count" style="display:none">0</span></button>
     <button id="sync-btn" onclick="openSyncModal()" title="Cloud sync — not configured">☁️</button>
     <button class="btn btn-ghost btn-sm" id="share-btn" style="display:none" onclick="openShare()">📤 Share</button>
     <button class="btn btn-primary" onclick="openTripModal()">+ New Trip</button>
@@ -2639,8 +2639,8 @@ function refreshInboxBadge(){
   const n=(S.inbox||[]).length;
   const btn=document.getElementById('imports-btn');
   const cnt=document.getElementById('imports-count');
-  if(btn)btn.style.display=n?'inline-flex':'none';
-  if(cnt)cnt.textContent=n;
+  if(btn)btn.style.display='inline-flex'; // always reachable (entry point to the review queue + file import)
+  if(cnt){cnt.textContent=n;cnt.style.display=n?'inline-flex':'none';}
 }
 // Merge remote drafts with local pending; drop anything already actioned (inboxDone).
 function mergeInbox(remoteDrafts){

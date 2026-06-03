@@ -1,6 +1,6 @@
 /* Wanderer service worker — offline app shell + map tile caching.
    Bump CACHE on each deploy to force clients to pick up new files. */
-const CACHE = 'wanderer-v2.3.0';
+const CACHE = 'wanderer-v2.3.1';
 const TILE_CACHE = 'wanderer-tiles-v1';
 
 // Files that make up the app shell. allSettled so one 404 won't abort install.
