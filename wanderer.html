@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta http-equiv="cache-control" content="no-cache, must-revalidate">
-<meta name="version" content="2.0">
+<meta name="version" content="2.3">
 <title>Wanderer — Travel Planner</title>
 <!-- PWA -->
 <meta name="theme-color" content="#2563EB">
@@ -334,6 +334,30 @@ textarea{resize:vertical}
 .share-opt .so-info strong{display:block;font-size:14px;font-weight:700;color:var(--text)}
 .share-opt .so-info span{font-size:12px;color:var(--muted)}
 
+/* ── EMAIL IMPORT ── */
+.imports-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:#DC2626;color:#fff;font-size:10.5px;font-weight:800;margin-left:2px}
+.draft-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+.draft-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border);background:#F8FAFC}
+.draft-head .di{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.draft-src{flex:1;min-width:0}
+.draft-src .ds-subj{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.draft-src .ds-from{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.draft-conf{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:2px 7px;border-radius:20px;flex-shrink:0}
+.draft-conf.high{background:#ECFDF5;color:#059669}.draft-conf.medium{background:#FFFBEB;color:#D97706}.draft-conf.low{background:#FEF2F2;color:#DC2626}
+.draft-body{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.draft-body .dfg{display:flex;flex-direction:column;gap:3px}
+.draft-body .dfg.full{grid-column:1/-1}
+.draft-body label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+.draft-route{padding:10px 16px;background:var(--primary-lt);border-top:1px solid var(--border);font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.draft-route.overlap{background:#FFFBEB}.draft-route.unfiled{background:#FEF2F2}
+.draft-route select{width:auto;padding:6px 9px;font-size:13px}
+.draft-foot{padding:12px 16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border);flex-wrap:wrap}
+.draft-foot .left{margin-right:auto;display:flex;align-items:center;gap:10px}
+.draft-savecopy{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.imports-toolbar{max-width:780px;margin:0 auto 14px;padding:0 24px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.imports-empty{text-align:center;padding:60px 24px;color:var(--muted)}
+.imports-empty .be{font-size:56px;display:block;margin-bottom:14px}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:#1E293B;color:#fff;padding:10px 20px;border-radius:100px;font-size:13.5px;font-weight:500;z-index:999;transition:transform .28s cubic-bezier(.34,1.3,.64,1);white-space:nowrap;box-shadow:var(--shadow-lg);display:inline-flex;align-items:center;gap:6px}
 .toast.show{transform:translateX(-50%) translateY(0)}
@@ -465,6 +489,7 @@ textarea{resize:vertical}
 <nav>
   <div class="brand" onclick="goHome()"><span class="logo">✈️</span> Wanderer</div>
   <div class="nav-right">
+    <button class="btn btn-ghost btn-sm" id="imports-btn" style="display:none" onclick="openImports()" title="Review imported emails">📥 Imports <span class="imports-badge" id="imports-count">0</span></button>
     <button id="sync-btn" onclick="openSyncModal()" title="Cloud sync — not configured">☁️</button>
     <button class="btn btn-ghost btn-sm" id="share-btn" style="display:none" onclick="openShare()">📤 Share</button>
     <button class="btn btn-primary" onclick="openTripModal()">+ New Trip</button>
@@ -478,6 +503,17 @@ textarea{resize:vertical}
   <div class="trip-grid" id="grid-current"></div>
   <div id="dash-past-label" class="section-label" style="display:none">Past Trips</div>
   <div class="trip-grid" id="grid-past"></div>
+</div>
+
+<!-- ══ IMPORTS (email review queue) ══ -->
+<div id="view-imports" class="view">
+  <div class="ph">
+    <button class="hero-back" style="background:var(--bg);color:var(--muted);border:1px solid var(--border);margin-bottom:12px" onclick="goHome()">← All Trips</button>
+    <h1>Imported Emails 📥</h1>
+    <p id="imports-sub">Review and confirm items parsed from your forwarded confirmations</p>
+  </div>
+  <div id="imports-list" style="max-width:780px;margin:0 auto;padding:0 24px 60px"></div>
+  <input type="file" id="imports-file-input" accept=".json,application/json" style="display:none" onchange="handleDraftsFileImport(this)">
 </div>
 
 <!-- ══ TRIP ══ -->
@@ -577,7 +613,7 @@ textarea{resize:vertical}
       <button class="btn btn-danger btn-sm" onclick="syncForceReload()" title="Ignore timestamps and load whatever is in the Gist right now">⬇️ Force reload from cloud</button>
       <button class="btn btn-primary" onclick="saveSyncConfig()">Save &amp; Sync now</button>
     </div>
-    <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v1.6 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
+    <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v2.3 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
     <div id="storage-info" style="text-align:center;font-size:11px;color:var(--muted);padding-bottom:8px"></div>
   </div>
 </div>
@@ -846,7 +882,7 @@ const CURRENCY_SYMBOLS = {
 /* ═══════════════════════════════════════
    STATE
 ═══════════════════════════════════════ */
-let S = {trips:[], currentTrip:null, currentTab:'overview'};
+let S = {trips:[], currentTrip:null, currentTab:'overview', inbox:[], inboxDone:[]};
 let editTripId=null, editItemId=null, itemDayIdx=null;
 let selEmoji=EMOJIS[0], selPal=0, selType='activity', selPS=null;
 let modalDocs=[], modalDocsToDelete=[];
@@ -1649,6 +1685,7 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
             ${item.confirmRef?`<span class="chip" style="background:#FFF7ED;color:#C2410C">Ref: ${esc(item.confirmRef)}</span>`:''}
             ${(isAccom||isCar||isParking)&&item.checkout?`<span class="chip" style="background:#F8FAFC;color:var(--muted)">→ ${fmtDate(item.checkout)}</span>`:''}
             ${docChip(item.docs)}
+            ${mailChip(item)}
           </div>
         </div>
         <div class="item-actions">
@@ -2578,6 +2615,293 @@ document.getElementById('im-address').addEventListener('input',function(){
 });
 
 /* ═══════════════════════════════════════
+   EMAIL IMPORT  (review queue for parsed confirmation emails)
+═══════════════════════════════════════ */
+const DRAFT_TYPES=['flight','transport','accommodation','activity','meal','other'];
+const SPAN_TYPES=new Set(['accommodation']); // plus transport car/parking, handled separately
+
+// ✉️ chip shown on item rows when an email is linked
+function mailChip(item){
+  if(!item||!item.mailLink)return'';
+  const link=String(item.mailLink).replace(/'/g,'%27');
+  const title=item.mailMeta&&item.mailMeta.subject?esc(item.mailMeta.subject):'View original email';
+  return`<span class="chip" style="background:#EFF6FF;color:#2563EB;cursor:pointer" title="${title}" onclick="event.stopPropagation();openMailLink('${link}')">✉️ Email</span>`;
+}
+// Open a linked email. message:// opens Apple Mail locally; http(s) opens a tab.
+function openMailLink(u){
+  if(/^message:\/\//i.test(u)){location.href=u;}
+  else if(/^https?:\/\//i.test(u)){window.open(u,'_blank');}
+  else{toast('No openable email link');}
+}
+
+// ── Inbox plumbing ────────────────────────────────────────────────────────
+function refreshInboxBadge(){
+  const n=(S.inbox||[]).length;
+  const btn=document.getElementById('imports-btn');
+  const cnt=document.getElementById('imports-count');
+  if(btn)btn.style.display=n?'inline-flex':'none';
+  if(cnt)cnt.textContent=n;
+}
+// Merge remote drafts with local pending; drop anything already actioned (inboxDone).
+function mergeInbox(remoteDrafts){
+  const done=new Set(S.inboxDone||[]);
+  const byId={};
+  (S.inbox||[]).forEach(d=>{if(d&&d.draftId&&!done.has(d.draftId))byId[d.draftId]=d;});
+  (remoteDrafts||[]).forEach(d=>{if(d&&d.draftId&&!done.has(d.draftId)&&!byId[d.draftId])byId[d.draftId]=d;});
+  S.inbox=Object.values(byId);
+}
+function markDraftDone(draftId){
+  if(!Array.isArray(S.inboxDone))S.inboxDone=[];
+  if(!S.inboxDone.includes(draftId))S.inboxDone.push(draftId);
+  if(S.inboxDone.length>500)S.inboxDone=S.inboxDone.slice(-500);
+  S.inbox=(S.inbox||[]).filter(d=>d.draftId!==draftId);
+}
+
+// ── Routing ───────────────────────────────────────────────────────────────
+function draftAnchorDate(draft){
+  return (draft && (draft.date || draft.item?.checkin)) || '';
+}
+function draftCandidateTrips(draft){
+  const a=draftAnchorDate(draft);
+  if(!a)return [];
+  return (S.trips||[]).filter(t=>t.startDate&&t.endDate&&t.startDate<=a&&a<=t.endDate);
+}
+function draftRouting(draft){
+  const c=draftCandidateTrips(draft);
+  return c.length===0?'unfiled':c.length===1?'matched':'overlap';
+}
+
+// ── Validation: build a clean Item from a draft + the edited form values ────
+function buildItemFromDraft(draft){
+  const id=draft.draftId;
+  const g=f=>{const el=document.getElementById('df-'+id+'-'+f);return el?el.value:undefined;};
+  const src=draft.item||{};
+  let type=g('type')||src.type||'activity';
+  if(!DRAFT_TYPES.includes(type))type='other';
+  const startDate=g('date')||draft.date||'';
+  const endDate=g('enddate')||src.checkout||'';
+  const isCar=type==='transport'&&src.transportType==='car';
+  const isParking=type==='transport'&&src.transportType==='parking';
+  const isSpan=type==='accommodation'||isCar||isParking;
+  // Start from parsed item to preserve type-specific fields (flightNo, fromAirport, etc.)
+  const item={...src};
+  item.type=type;
+  item.name=(g('name')||src.name||'').trim();
+  item.timeStart=(g('time')||src.timeStart||'').trim();
+  item.vendor=(g('vendor')||src.vendor||'').trim();
+  item.confirmRef=(g('ref')||src.confirmRef||'').trim();
+  item.address=(g('address')||src.address||'').trim();
+  item.notes=(g('notes')||src.notes||'').trim();
+  const costRaw=g('cost'); item.cost = costRaw!==undefined ? (parseFloat(costRaw)||'') : (src.cost||'');
+  item.currency=((g('currency')||src.currency||'GBP').trim().toUpperCase())||'GBP';
+  const ps=g('pay'); item.payStatus = ps!==undefined ? (ps||null) : (src.payStatus||null);
+  if(isSpan){ item.checkin=startDate; item.checkout=endDate; }
+  else { delete item.checkin; delete item.checkout; }
+  // anchor date the day is chosen by
+  const anchor = isSpan ? (startDate||endDate) : startDate;
+  return {item, anchor, isSpan};
+}
+
+// Insert a finished item into the right day of a trip (mirrors saveItem's anchoring).
+function fileItemIntoTrip(trip, item, anchor){
+  syncDays(trip);
+  const days=trip.days||[];
+  let idx=days.findIndex(d=>d.date===anchor);
+  if(idx<0){ // anchor outside range — clamp to nearest end
+    idx = anchor && days.length && anchor>days[days.length-1].date ? days.length-1 : 0;
+  }
+  if(!days[idx].items)days[idx].items=[];
+  item.id=uid();
+  days[idx].items.push(item);
+  return idx;
+}
+
+// ── Review UI ─────────────────────────────────────────────────────────────
+function openImports(){ showView('imports'); renderImports(); }
+
+function renderImports(){
+  const list=document.getElementById('imports-list');
+  const sub=document.getElementById('imports-sub');
+  const drafts=S.inbox||[];
+  if(sub)sub.textContent=drafts.length?`${drafts.length} item${drafts.length>1?'s':''} to review`:'Nothing to review right now';
+  const toolbar=`<div class="imports-toolbar">
+    <button class="btn btn-ghost btn-sm" onclick="triggerDraftsFileImport()">📂 Import drafts file…</button>
+    ${drafts.some(d=>draftRouting(d)==='matched')?`<button class="btn btn-primary btn-sm" onclick="confirmAllMatched()">✓ Confirm all matched</button>`:''}
+  </div>`;
+  if(!drafts.length){
+    list.innerHTML=toolbar+`<div class="imports-empty"><span class="be">📭</span><h2>No imported emails</h2><p>Run the "Import travel mail" action, or load a drafts file to review items here.</p></div>`;
+    return;
+  }
+  list.innerHTML=toolbar+drafts.map(renderDraftCard).join('');
+}
+
+function renderDraftCard(draft){
+  const id=draft.draftId;
+  const it=draft.item||{};
+  const ty=getType(it.type||'activity');
+  const routing=draftRouting(draft);
+  const conf=(draft.confidence||'medium').toLowerCase();
+  const isCar=it.type==='transport'&&it.transportType==='car';
+  const isParking=it.type==='transport'&&it.transportType==='parking';
+  const isSpan=it.type==='accommodation'||isCar||isParking;
+  const startVal=draft.date||it.checkin||'';
+  const endVal=it.checkout||draft.endDate||'';
+  const src=draft.source||{};
+  const opt=(v,sel)=>`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(v)}</option>`;
+  const typeOpts=DRAFT_TYPES.map(t=>`<option value="${t}"${t===(it.type||'activity')?' selected':''}>${getType(t).emoji} ${getType(t).label}</option>`).join('');
+  const payOpts=[['','—'],['paid','Paid'],['topay','To Pay'],['estimated','Estimated']].map(([v,l])=>`<option value="${v}"${v===(it.payStatus||'')?' selected':''}>${l}</option>`).join('');
+
+  // Routing block
+  const preselect = routing==='matched' ? draftCandidateTrips(draft)[0].id : '';
+  const tripOptions=(S.trips||[]).slice().sort((a,b)=>(a.startDate||'').localeCompare(b.startDate||''))
+    .map(t=>`<option value="${t.id}"${t.id===preselect?' selected':''}>${esc(t.emoji+' '+t.name)} (${fmtDateShort(t.startDate)})</option>`).join('');
+  const tripSelect=`<select id="df-${id}-trip">
+      <option value=""${preselect?'':' selected'}>${routing==='unfiled'?'— no matching trip —':'— choose trip —'}</option>
+      ${tripOptions}
+    </select>`;
+  let routeHTML;
+  if(routing==='matched'){
+    const t=draftCandidateTrips(draft)[0];
+    routeHTML=`<div class="draft-route"><span>→ Files into <strong>${esc(t.emoji+' '+t.name)}</strong></span>
+      <span style="color:var(--muted)">change:</span>${tripSelect}</div>`;
+  }else if(routing==='overlap'){
+    routeHTML=`<div class="draft-route overlap"><span>⚠️ ${draftCandidateTrips(draft).length} trips cover this date — choose one:</span>${tripSelect}</div>`;
+  }else{
+    routeHTML=`<div class="draft-route unfiled"><span>No trip covers this date.</span>${tripSelect}
+      <button class="btn btn-ghost btn-sm" onclick="createTripFromDraft('${id}')">＋ Create trip from this</button></div>`;
+  }
+
+  return`<div class="draft-card" id="draft-${id}">
+    <div class="draft-head">
+      <div class="di" style="background:${ty.bg}">${ty.emoji}</div>
+      <div class="draft-src">
+        <div class="ds-subj">${esc(src.subject||'(no subject)')}</div>
+        <div class="ds-from">${esc(src.from||'')}${src.received?` · ${esc(src.received)}`:''}</div>
+      </div>
+      ${src.mailLink?`<button class="icon-btn" title="Open original email" onclick="openMailLink('${String(src.mailLink).replace(/'/g,'%27')}')">✉️</button>`:''}
+      <span class="draft-conf ${conf}">${conf}</span>
+    </div>
+    <div class="draft-body">
+      <div class="dfg"><label>Type</label><select id="df-${id}-type">${typeOpts}</select></div>
+      <div class="dfg"><label>Name</label><input type="text" id="df-${id}-name" value="${esc(it.name||'')}"></div>
+      <div class="dfg"><label>${isSpan?'Start / check-in':'Date'}</label><input type="date" id="df-${id}-date" value="${esc(startVal)}"></div>
+      <div class="dfg"><label>${isSpan?'End / check-out':'End date (optional)'}</label><input type="date" id="df-${id}-enddate" value="${esc(endVal)}"></div>
+      <div class="dfg"><label>Time</label><input type="time" id="df-${id}-time" value="${esc(it.timeStart||'')}"></div>
+      <div class="dfg"><label>Vendor</label><input type="text" id="df-${id}-vendor" value="${esc(it.vendor||'')}"></div>
+      <div class="dfg"><label>Cost</label><input type="number" step="0.01" id="df-${id}-cost" value="${esc(it.cost!=null?it.cost:'')}"></div>
+      <div class="dfg"><label>Currency</label><input type="text" id="df-${id}-currency" value="${esc(it.currency||'GBP')}" maxlength="3"></div>
+      <div class="dfg"><label>Payment</label><select id="df-${id}-pay">${payOpts}</select></div>
+      <div class="dfg"><label>Confirmation ref</label><input type="text" id="df-${id}-ref" value="${esc(it.confirmRef||'')}"></div>
+      <div class="dfg full"><label>Address</label><input type="text" id="df-${id}-address" value="${esc(it.address||'')}"></div>
+      <div class="dfg full"><label>Notes</label><input type="text" id="df-${id}-notes" value="${esc(it.notes||'')}"></div>
+    </div>
+    ${routeHTML}
+    <div class="draft-foot">
+      <div class="left">${draft.parserNotes?`<span style="font-size:12px;color:var(--muted)">📝 ${esc(draft.parserNotes)}</span>`:''}</div>
+      <button class="btn btn-ghost btn-sm" onclick="discardDraft('${id}')">Discard</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmDraft('${id}')">Confirm & file</button>
+    </div>
+  </div>`;
+}
+
+function getDraft(id){return (S.inbox||[]).find(d=>d.draftId===id);}
+
+function confirmDraft(id){
+  const draft=getDraft(id);if(!draft)return;
+  const {item,anchor}=buildItemFromDraft(draft);
+  if(!item.name){toast('Give the item a name first');return;}
+  let tripId=document.getElementById('df-'+id+'-trip')?.value;
+  if(!tripId){const c=draftCandidateTrips(draft);if(c.length===1)tripId=c[0].id;}
+  if(!tripId){toast('Pick a trip, or create one');return;}
+  const trip=getTrip(tripId);if(!trip){toast('Trip not found');return;}
+  // attach email link + dedup key
+  if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
+  if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
+  if(draft.messageId)item.messageId=draft.messageId;
+  fileItemIntoTrip(trip,item,anchor);
+  markDraftDone(id);
+  persist();
+  refreshInboxBadge();renderImports();renderDashboard();
+  toast(`Filed into ${trip.name} ✓`);
+}
+
+function confirmAllMatched(){
+  const matched=(S.inbox||[]).filter(d=>draftRouting(d)==='matched').map(d=>d.draftId);
+  if(!matched.length){toast('Nothing auto-matched');return;}
+  let n=0;
+  matched.forEach(id=>{
+    const draft=getDraft(id);if(!draft)return;
+    const {item,anchor}=buildItemFromDraft(draft);
+    if(!item.name)return;
+    const trip=draftCandidateTrips(draft)[0];if(!trip)return;
+    if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
+    if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
+    if(draft.messageId)item.messageId=draft.messageId;
+    fileItemIntoTrip(trip,item,anchor);
+    markDraftDone(id);n++;
+  });
+  persist();refreshInboxBadge();renderImports();renderDashboard();
+  toast(`Filed ${n} item${n!==1?'s':''} ✓`);
+}
+
+function discardDraft(id){
+  const draft=getDraft(id);if(!draft)return;
+  markDraftDone(id);
+  persist();refreshInboxBadge();renderImports();
+  toastAction('Draft discarded','Undo',()=>{
+    S.inboxDone=(S.inboxDone||[]).filter(x=>x!==id);
+    if(!(S.inbox||[]).some(d=>d.draftId===id))S.inbox.push(draft);
+    persist();refreshInboxBadge();renderImports();
+  });
+}
+
+// No-match → create a new trip spanning the booking dates, then file into it.
+function createTripFromDraft(id){
+  const draft=getDraft(id);if(!draft)return;
+  const {item,anchor,isSpan}=buildItemFromDraft(draft);
+  if(!item.name){toast('Give the item a name first');return;}
+  const start=isSpan?(item.checkin||anchor):anchor;
+  const end=isSpan?(item.checkout||item.checkin||anchor):anchor;
+  if(!start){toast('Set a date first');return;}
+  const defName=item.vendor||item.name||'New trip';
+  const name=(prompt('Name for the new trip:',defName)||'').trim();
+  if(!name)return;
+  const trip={id:uid(),name,destinations:item.address||'',startDate:start,endDate:end<start?start:end,
+    emoji:'🧳',palIdx:Math.floor(Math.random()*PALS.length),notes:'',homeAddress:'',travellers:[],days:[]};
+  S.trips.unshift(trip);
+  if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
+  if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
+  if(draft.messageId)item.messageId=draft.messageId;
+  fileItemIntoTrip(trip,item,anchor);
+  markDraftDone(id);
+  persist();refreshInboxBadge();renderImports();renderDashboard();
+  toast(`Created “${name}” and filed the item ✓`);
+}
+
+// ── Manual drafts-file ingest (testing / no-token path) ─────────────────────
+function triggerDraftsFileImport(){document.getElementById('imports-file-input').click();}
+function handleDraftsFileImport(input){
+  const file=input.files&&input.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const obj=JSON.parse(e.target.result);
+      const drafts=Array.isArray(obj)?obj:(obj.drafts||[]);
+      if(!Array.isArray(drafts)||!drafts.length){toast('No drafts found in file');return;}
+      // ensure each has a draftId
+      drafts.forEach(d=>{if(d&&!d.draftId)d.draftId=uid();});
+      mergeInbox(drafts);
+      persist();refreshInboxBadge();renderImports();
+      toast(`Loaded ${drafts.length} draft${drafts.length!==1?'s':''} ✓`);
+    }catch(err){toast('Could not read drafts file');}
+  };
+  reader.onerror=()=>toast('Could not read file');
+  reader.readAsText(file);
+  input.value='';
+}
+
+/* ═══════════════════════════════════════
    SHARE
 ═══════════════════════════════════════ */
 function openShare(){
@@ -3242,12 +3566,14 @@ async function syncPush(){
     console.log('[Wanderer sync] syncPush() — pushing trips:',S.trips?.length,'at:',now);
     const payload={trips:S.trips,updatedAt:now};
     const docsPayload={docs:docStore(),updatedAt:now};
+    const inboxPayload={drafts:S.inbox||[],done:(S.inboxDone||[]).slice(-500),updatedAt:now};
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
       method:'PATCH',
       headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'},
       body:JSON.stringify({files:{
         'wanderer-data.json':{content:JSON.stringify(payload,null,2)},
-        'wanderer-docs.json':{content:JSON.stringify(docsPayload,null,2)}
+        'wanderer-docs.json':{content:JSON.stringify(docsPayload,null,2)},
+        'wanderer-inbox.json':{content:JSON.stringify(inboxPayload,null,2)}
       }})
     });
     if(!res.ok)throw new Error(`GitHub ${res.status}`);
@@ -3272,6 +3598,12 @@ async function syncPull(silent=false){
     });
     if(!res.ok)throw new Error(`GitHub ${res.status}`);
     const gist=await res.json();
+    // Merge the email-import inbox (independent of trip-data timestamp logic)
+    try{
+      const inboxRaw=gist.files?.['wanderer-inbox.json']?.content;
+      if(inboxRaw){const ib=JSON.parse(inboxRaw); if(ib&&Array.isArray(ib.drafts)) mergeInbox(ib.drafts);}
+    }catch(e){}
+    refreshInboxBadge();
     const raw=gist.files?.['wanderer-data.json']?.content;
     if(!raw||raw.trim()==='{}'){
       console.log('[Wanderer sync] Remote empty — pushing local');
@@ -3480,15 +3812,19 @@ if('serviceWorker' in navigator){
 }
 (async()=>{
   await initDocStore(); // must finish before hydrate so cleanOrphanDocs sees the IDB cache
+  if(!Array.isArray(S.inbox))S.inbox=[];
+  if(!Array.isArray(S.inboxDone))S.inboxDone=[];
   hydrate();
   showView('dashboard');
   renderDashboard();
+  refreshInboxBadge();
   if(!S.trips.length){
     document.getElementById('grid-current').innerHTML=`<div class="empty-wrap"><span class="be">🌍</span><h2>No trips yet</h2><p>Hit "+ New Trip" to start planning your first adventure!</p><button class="btn btn-primary" onclick="openTripModal()">+ Plan a Trip</button></div>`;
   }
   // On load: pull from cloud (silent=true so no spinner on first open)
   const loaded=await syncPull(true);
   if(loaded)renderDashboard();
+  refreshInboxBadge();
 })();
 </script>
 </body>
