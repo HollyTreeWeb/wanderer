@@ -6,6 +6,15 @@
 <meta http-equiv="cache-control" content="no-cache, must-revalidate">
 <meta name="version" content="2.0">
 <title>Wanderer — Travel Planner</title>
+<!-- PWA -->
+<meta name="theme-color" content="#2563EB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Wanderer">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -317,8 +326,10 @@ textarea{resize:vertical}
 .share-opt .so-info span{font-size:12px;color:var(--muted)}
 
 /* ── TOAST ── */
-.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:#1E293B;color:#fff;padding:10px 20px;border-radius:100px;font-size:13.5px;font-weight:500;z-index:999;transition:transform .28s cubic-bezier(.34,1.3,.64,1);white-space:nowrap;box-shadow:var(--shadow-lg)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:#1E293B;color:#fff;padding:10px 20px;border-radius:100px;font-size:13.5px;font-weight:500;z-index:999;transition:transform .28s cubic-bezier(.34,1.3,.64,1);white-space:nowrap;box-shadow:var(--shadow-lg);display:inline-flex;align-items:center;gap:6px}
 .toast.show{transform:translateX(-50%) translateY(0)}
+.toast-undo-btn{margin-left:8px;background:transparent;border:none;color:#60A5FA;font-weight:700;font-size:13.5px;cursor:pointer;font-family:inherit;padding:2px 4px}
+.toast-undo-btn:hover{color:#93C5FD;text-decoration:underline}
 
 /* ── DAY MAP ── */
 .day-map-wrap{margin:0 16px 0;display:none}
@@ -1025,10 +1036,22 @@ function tripStatsGBP(t){
 function tripItems(t){return(t.days||[]).flatMap(d=>d.items||[])}
 function itemsByType(t,typeId){return tripItems(t).filter(i=>i.type===typeId)}
 
+let _toastTimer=null;
 function toast(msg,ms=2600){
   const el=document.getElementById('toast');
+  clearTimeout(_toastTimer);
   el.textContent=msg;el.classList.add('show');
-  setTimeout(()=>el.classList.remove('show'),ms);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),ms);
+}
+// Toast with an action button (e.g. "Undo"). Auto-dismisses after ms.
+function toastAction(msg,actionLabel,cb,ms=6000){
+  const el=document.getElementById('toast');
+  clearTimeout(_toastTimer);
+  el.innerHTML=`<span>${esc(msg)}</span><button class="toast-undo-btn" id="toast-action-btn">${esc(actionLabel)}</button>`;
+  el.classList.add('show');
+  const btn=document.getElementById('toast-action-btn');
+  if(btn)btn.onclick=()=>{clearTimeout(_toastTimer);el.classList.remove('show');try{cb();}catch(e){console.error(e);}};
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),ms);
 }
 
 /* ═══════════════════════════════════════
@@ -2048,11 +2071,41 @@ function saveTrip(){
   if(editTripId&&S.currentTrip===editTripId){openTrip(editTripId)}else{goHome()}
 }
 
+// Single-level undo buffer for deletions (item or trip)
+let _lastDeleted=null;
 function confirmDeleteTrip(id){
-  if(!confirm('Delete this trip? This cannot be undone.'))return;
-  S.trips=S.trips.filter(t=>t.id!==id);persist();
+  const idx=S.trips.findIndex(t=>t.id===id);
+  if(idx<0)return;
+  const removed=S.trips[idx];
+  S.trips.splice(idx,1);
+  _lastDeleted={kind:'trip',idx,data:removed};
+  persist();
   if(S.currentTrip===id)goHome();else renderDashboard();
-  toast('Trip deleted');
+  toastAction('Trip deleted','Undo',undoDelete);
+}
+function undoDelete(){
+  if(!_lastDeleted)return;
+  const d=_lastDeleted;_lastDeleted=null;
+  if(d.kind==='trip'){
+    S.trips.splice(Math.min(d.idx,S.trips.length),0,d.data);
+    persist();
+    if(S.currentTrip)switchTab(S.currentTab);else renderDashboard();
+    toast('Trip restored ✓');
+  }else if(d.kind==='item'){
+    const trip=getTrip(d.tripId);
+    if(!trip||!trip.days[d.dayIdx]){toast('Could not restore item');return;}
+    const day=trip.days[d.dayIdx];
+    if(!day.items)day.items=[];
+    day.items.splice(Math.min(d.idx,day.items.length),0,d.data);
+    persist();
+    const isSpan=d.data.type==='accommodation'||d.data.transportType==='car'||d.data.transportType==='parking';
+    if(S.currentTrip===trip.id){
+      if(S.currentTab==='itinerary'){refreshDayUI(d.dayIdx);if(isSpan)refreshAllDayRefs(trip);}
+      else switchTab(S.currentTab);
+      updateHeroMeta(trip);
+    }
+    toast('Item restored ✓');
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -2298,8 +2351,17 @@ function saveItem(){
 
 function deleteItem(itemId,dayIdx){
   const trip=getTrip(S.currentTrip);
-  trip.days[dayIdx].items=(trip.days[dayIdx].items||[]).filter(i=>i.id!==itemId);
-  persist();refreshDayUI(dayIdx);updateHeroMeta(trip);toast('Item removed');
+  const items=trip.days[dayIdx].items||[];
+  const idx=items.findIndex(i=>i.id===itemId);
+  if(idx<0)return;
+  const removed=items[idx];
+  items.splice(idx,1);
+  _lastDeleted={kind:'item',tripId:trip.id,dayIdx,idx,data:removed};
+  persist();refreshDayUI(dayIdx);
+  const isSpan=removed.type==='accommodation'||removed.transportType==='car'||removed.transportType==='parking';
+  if(isSpan)refreshAllDayRefs(trip);
+  updateHeroMeta(trip);
+  toastAction('Item removed','Undo',undoDelete);
 }
 
 // Auto-populate maps hint on address input
@@ -3205,6 +3267,10 @@ document.querySelectorAll('.overlay').forEach(el=>{
 /* ═══════════════════════════════════════
    BOOT
 ═══════════════════════════════════════ */
+// Register service worker for offline use & installability (no-op if unsupported / file:// )
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});
+}
 (async()=>{
   await initDocStore(); // must finish before hydrate so cleanOrphanDocs sees the IDB cache
   hydrate();
