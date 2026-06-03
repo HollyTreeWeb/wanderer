@@ -178,6 +178,11 @@ nav{background:var(--surface);border-bottom:1px solid var(--border);height:56px;
 .chip{font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px}
 .item-actions{display:flex;gap:3px;opacity:0;transition:opacity .12s;flex-shrink:0}
 .item-row:hover .item-actions{opacity:1}
+/* On touch devices there is no hover — keep item actions (incl. move buttons) always visible */
+@media (hover:none){.item-actions{opacity:1}}
+/* Weather chip on day cards */
+.day-wx{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;margin-right:8px;flex-shrink:0}
+.day-wx:empty{display:none}
 .item-empty{text-align:center;padding:20px 0 14px;color:#CBD5E1;font-size:13px}
 .day-foot{padding:10px 16px 13px;border-top:1px solid #F1F5F9;display:flex;align-items:center;gap:8px}
 .day-foot-notes{flex:1;border:none;font-size:12.5px;color:var(--muted);font-family:inherit;background:transparent;outline:none;resize:none}
@@ -312,6 +317,10 @@ textarea{resize:vertical}
 
 /* Extra fields (type-specific) */
 .extra-fields{background:#F8FAFC;border-radius:var(--radius-sm);border:1px solid var(--border);padding:12px;margin-bottom:14px}
+
+/* Image upload + preview (item modal) */
+.img-upload-row{display:flex;gap:8px;margin-top:8px;align-items:center}
+.img-preview{display:block;max-width:100%;max-height:170px;border-radius:var(--radius-sm);border:1px solid var(--border);margin-top:10px;object-fit:cover}
 
 /* Share modal */
 .share-preview{background:#F8FAFC;border-radius:10px;border:1px solid var(--border);padding:16px;text-align:center;margin-bottom:16px}
@@ -740,8 +749,15 @@ textarea{resize:vertical}
 
       <div class="modal-section">Notes & Media</div>
       <div class="fg"><label>Notes / Details</label><textarea id="im-notes" rows="3" placeholder="Booking details, tips, things to remember..."></textarea></div>
-      <div class="fg"><label>Image URL (optional)</label><input type="url" id="im-img" placeholder="https://... (photo of hotel, activity, etc.)">
-        <div class="field-hint">Paste a URL to an image to illustrate this item</div>
+      <div class="fg"><label>Image (optional)</label><input type="url" id="im-img" placeholder="https://... or upload a photo below" oninput="updateImgPreview()">
+        <div class="img-upload-row">
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📷 Upload photo
+            <input type="file" accept="image/*" id="im-img-file" style="display:none" onchange="handleItemImageUpload(this)">
+          </label>
+          <button type="button" class="btn btn-ghost btn-sm" id="im-img-clear" onclick="clearItemImage()" style="display:none">Remove</button>
+        </div>
+        <img id="im-img-preview" class="img-preview" style="display:none" alt="">
+        <div class="field-hint">Paste an image URL, or upload a photo — it's auto-resized and saved with the trip</div>
       </div>
       <div class="modal-section">Documents</div>
       <div id="im-docs-list"></div>
@@ -1271,6 +1287,7 @@ function renderTripGrid(elId, trips, td){
         <span class="trip-emoji">${t.emoji}</span>
         <div class="card-actions" onclick="event.stopPropagation()">
           <button class="icon-btn" onclick="openEditTripModal('${t.id}')" title="Edit">✏️</button>
+          <button class="icon-btn" onclick="duplicateTrip('${t.id}')" title="Duplicate">⧉</button>
           <button class="icon-btn del" onclick="confirmDeleteTrip('${t.id}')" title="Delete">🗑️</button>
         </div>
       </div>
@@ -1482,6 +1499,7 @@ function renderItinerary(trip){
             <div class="day-sub" id="dsub-${i}">${sub}</div>
           </div>
         </div>
+        <span class="day-wx" id="daywx-${i}"></span>
         <span class="day-chevron ${isToday?'open':''}" id="dchev-${i}">▾</span>
       </div>
       <div class="day-body ${isToday?'open':''}" id="dbody-${i}">
@@ -1504,6 +1522,69 @@ function renderItinerary(trip){
       document.getElementById('dbody-'+i)?.classList.add('open');
       document.getElementById('dchev-'+i)?.classList.add('open');
     }
+  });
+  // Fetch & paint per-day weather (fire-and-forget; only affects days within forecast range)
+  renderTripWeather(trip);
+}
+
+/* ═══════════════════════════════════════
+   WEATHER (Open-Meteo — free, no API key)
+═══════════════════════════════════════ */
+const WX_KEY='wanderer_wx';
+function wxCache(){try{return JSON.parse(localStorage.getItem(WX_KEY)||'{}')}catch(e){return{}}}
+function wxSave(c){try{localStorage.setItem(WX_KEY,JSON.stringify(c))}catch(e){}}
+// WMO weather codes → [emoji, description]
+const WX_CODES={0:['☀️','Clear'],1:['🌤️','Mainly clear'],2:['⛅','Partly cloudy'],3:['☁️','Overcast'],
+  45:['🌫️','Fog'],48:['🌫️','Rime fog'],51:['🌦️','Light drizzle'],53:['🌦️','Drizzle'],55:['🌧️','Heavy drizzle'],
+  56:['🌧️','Freezing drizzle'],57:['🌧️','Freezing drizzle'],61:['🌦️','Light rain'],63:['🌧️','Rain'],65:['🌧️','Heavy rain'],
+  66:['🌧️','Freezing rain'],67:['🌧️','Freezing rain'],71:['🌨️','Light snow'],73:['🌨️','Snow'],75:['❄️','Heavy snow'],
+  77:['🌨️','Snow grains'],80:['🌦️','Showers'],81:['🌧️','Showers'],82:['⛈️','Violent showers'],
+  85:['🌨️','Snow showers'],86:['❄️','Snow showers'],95:['⛈️','Thunderstorm'],96:['⛈️','Thunderstorm'],99:['⛈️','Thunderstorm']};
+function wxDesc(code){return WX_CODES[code]||['🌡️','']}
+
+async function fetchWeatherRange(lat,lng,start,end){
+  const key=`${lat.toFixed(2)},${lng.toFixed(2)},${start},${end}`;
+  const cache=wxCache();
+  const hit=cache[key];
+  if(hit&&(Date.now()-hit.ts<6*3600*1000))return hit.data; // cache 6h
+  try{
+    const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}`+
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&start_date=${start}&end_date=${end}`;
+    const r=await fetch(url);
+    if(!r.ok)return null;
+    const j=await r.json();
+    if(!j.daily||!j.daily.time)return null;
+    const data={};
+    j.daily.time.forEach((dt,idx)=>{data[dt]={code:j.daily.weather_code[idx],tmax:j.daily.temperature_2m_max[idx],tmin:j.daily.temperature_2m_min[idx]};});
+    cache[key]={ts:Date.now(),data};wxSave(cache);
+    return data;
+  }catch(e){return null;}
+}
+
+// Forecasts paint on day cards for any day within ~16 days of today.
+async function renderTripWeather(trip){
+  if(!trip||!(trip.days||[]).length)return;
+  const td=today();
+  const maxDate=addDays(td,15); // Open-Meteo gives up to 16 days
+  const inRange=(trip.days||[]).map(d=>d.date).filter(dt=>dt>=td&&dt<=maxDate).sort();
+  if(!inRange.length)return; // trip fully past or starts beyond forecast window
+  // Pick a representative location: trip destination, else first item address found
+  let loc=(trip.destinations||'').trim();
+  if(!loc){
+    for(const d of trip.days){const hit=(d.items||[]).find(it=>it.address);if(hit){loc=hit.address;break;}}
+  }
+  if(!loc)return;
+  let geo;
+  try{geo=await geocodeRobust(loc,trip.destinations||'');}catch(e){return;}
+  if(!geo)return;
+  const wx=await fetchWeatherRange(geo.lat,geo.lng,inRange[0],inRange[inRange.length-1]);
+  if(!wx)return;
+  // Bail if the user navigated away while we were fetching
+  if(S.currentTrip!==trip.id)return;
+  (trip.days||[]).forEach((d,i)=>{
+    const w=wx[d.date];
+    const el=document.getElementById('daywx-'+i);
+    if(el&&w){const[emoji,desc]=wxDesc(w.code);el.innerHTML=`<span title="${esc(desc)}">${emoji} ${Math.round(w.tmax)}°/${Math.round(w.tmin)}°</span>`;}
   });
 }
 
@@ -1538,6 +1619,7 @@ function getStayRefsForDay(trip, dayDate, ownItemIds){
 
 function renderItemRows(items, dayIdx, dayDate, stayRefs){
   stayRefs=stayRefs||[];
+  const nDays=((getTrip(S.currentTrip)||{}).days||[]).length;
   const primaryHTML=[...items]
     .sort((a,b)=>(a.timeStart||'zzz').localeCompare(b.timeStart||'zzz'))
     .map(item=>{
@@ -1570,6 +1652,8 @@ function renderItemRows(items, dayIdx, dayDate, stayRefs){
           </div>
         </div>
         <div class="item-actions">
+          ${dayIdx>0?`<button class="icon-btn" onclick="moveItemDay('${item.id}',${dayIdx},-1)" title="Move to previous day">⬆️</button>`:''}
+          ${dayIdx<nDays-1?`<button class="icon-btn" onclick="moveItemDay('${item.id}',${dayIdx},1)" title="Move to next day">⬇️</button>`:''}
           <button class="icon-btn" onclick="openEditItem('${item.id}',${dayIdx})" title="Edit">✏️</button>
           ${item.url?`<button class="icon-btn" onclick="window.open('${esc(safeUrl(item.url))}','_blank')" title="Open booking">🔗</button>`:''}
           ${item.address?`<button class="icon-btn" onclick="window.open('${mapsUrl(item.address)}','_blank')" title="Maps">🗺️</button>`:''}
@@ -1860,7 +1944,8 @@ function renderBudget(trip){
     ${fxHTML}
     ${psHTML}
     ${catHTML?`<div class="budget-cats">${catHTML}</div>`:''}
-    ${rows.length?`<div class="budget-table">
+    ${rows.length?`<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" onclick="exportBudgetCSV()">⬇️ Export CSV</button></div>
+    <div class="budget-table">
       <div class="bt-head"><span>Item</span><span>Date</span><span>Status</span><span>Local</span><span>GBP</span></div>
       ${rowsHTML}
     </div>`:`<div style="text-align:center;padding:48px;color:var(--muted)">No costs yet — add amounts to your itinerary items</div>`}
@@ -1868,6 +1953,46 @@ function renderBudget(trip){
 
   // Populate the FX section — renderFXSection shows saved rates+edit button, or the form if missing
   if(foreignCurs.length) renderFXSection(trip.id,'bfx-rates');
+}
+
+// Download the budget as a spreadsheet-ready CSV (date-sorted, with a GBP total row).
+function exportBudgetCSV(){
+  const trip=getTrip(S.currentTrip);if(!trip)return;
+  const rates={GBP:1,...(trip.manualRates||{})};
+  const rows=[];
+  (trip.days||[]).forEach(day=>{
+    (day.items||[]).forEach(item=>{
+      if(!item.cost)return;
+      rows.push({
+        date:day.date,
+        name:item.name||'',
+        type:getType(item.type).label,
+        status:item.payStatus&&PS_META[item.payStatus]?PS_META[item.payStatus].label:'',
+        cost:item.cost,
+        cur:item.currency||'GBP',
+        gbp:toGBP(item.cost,item.currency||'GBP',rates)
+      });
+    });
+  });
+  if(!rows.length){toast('No costs to export');return;}
+  rows.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const q=s=>{const v=String(s==null?'':s);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const lines=[['Date','Item','Type','Status','Local Cost','Currency','GBP'].join(',')];
+  let total=0;
+  rows.forEach(r=>{
+    if(r.gbp!=null)total+=r.gbp;
+    lines.push([r.date,r.name,r.type,r.status,r.cost,r.cur,r.gbp!=null?r.gbp.toFixed(2):''].map(q).join(','));
+  });
+  lines.push(['','','','','','Total (GBP)',total.toFixed(2)].map(q).join(','));
+  const csv='﻿'+lines.join('\r\n'); // BOM so Excel reads UTF-8 correctly
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`${(trip.name||'trip').replace(/[^\w\-]+/g,'_')}_budget.csv`;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('Budget CSV downloaded ✓');
 }
 
 /* ═══════════════════════════════════════
@@ -2071,6 +2196,21 @@ function saveTrip(){
   if(editTripId&&S.currentTrip===editTripId){openTrip(editTripId)}else{goHome()}
 }
 
+// Deep-clone a trip as a starting point for a similar itinerary.
+function duplicateTrip(id){
+  const t=getTrip(id);if(!t)return;
+  const copy=JSON.parse(JSON.stringify(t));
+  copy.id=uid();
+  copy.name=(t.name||'Trip')+' (copy)';
+  // Fresh item ids so the clone is independent; doc references are shared by id
+  // (safe — cleanOrphanDocs only drops a binary when no trip references it).
+  (copy.days||[]).forEach(d=>{(d.items||[]).forEach(it=>{it.id=uid();});});
+  S.trips.push(copy);
+  persist();
+  renderDashboard();
+  toast('Trip duplicated ✓');
+}
+
 // Single-level undo buffer for deletions (item or trip)
 let _lastDeleted=null;
 function confirmDeleteTrip(id){
@@ -2189,6 +2329,8 @@ function openItemModal(dayIdx){
   });
   document.getElementById('im-currency').value='GBP';
   document.getElementById('maps-link-hint').innerHTML='';
+  const imgFile=document.getElementById('im-img-file');if(imgFile)imgFile.value='';
+  updateImgPreview();
   selType='activity'; selPS=null; selPayStatus(null);
   modalDocs=[];modalDocsToDelete=[];renderModalDocs();
   buildTypePicker();showExtraFields('activity');
@@ -2214,6 +2356,8 @@ function openEditItem(itemId,dayIdx){
   document.getElementById('im-currency').value=item.currency||'GBP';
   document.getElementById('im-notes').value=item.notes||'';
   document.getElementById('im-img').value=item.imgUrl||'';
+  const editImgFile=document.getElementById('im-img-file');if(editImgFile)editImgFile.value='';
+  updateImgPreview();
   // Extra fields
   document.getElementById('im-flight-no').value=item.flightNo||'';
   document.getElementById('im-from-airport').value=item.fromAirport||'';
@@ -2349,6 +2493,28 @@ function saveItem(){
   updateHeroMeta(trip);
 }
 
+// Touch-friendly alternative to drag-and-drop: move an item to the previous/next day.
+function moveItemDay(itemId,dayIdx,dir){
+  const trip=getTrip(S.currentTrip);if(!trip)return;
+  const target=dayIdx+dir;
+  if(target<0||target>=(trip.days||[]).length)return;
+  const items=trip.days[dayIdx].items||[];
+  const i=items.findIndex(x=>x.id===itemId);
+  if(i<0)return;
+  const [moved]=items.splice(i,1);
+  if(!trip.days[target].items)trip.days[target].items=[];
+  trip.days[target].items.push(moved);
+  persist();
+  refreshDayUI(dayIdx);refreshDayUI(target);
+  const isSpan=moved.type==='accommodation'||moved.transportType==='car'||moved.transportType==='parking';
+  if(isSpan)refreshAllDayRefs(trip);
+  updateHeroMeta(trip);
+  // Make sure the destination day is open so the move is visible
+  const tb=document.getElementById('dbody-'+target);
+  if(tb&&!tb.classList.contains('open')){tb.classList.add('open');document.getElementById('dchev-'+target)?.classList.add('open');initDayMap(target);}
+  toast(dir<0?'Moved to previous day ✓':'Moved to next day ✓');
+}
+
 function deleteItem(itemId,dayIdx){
   const trip=getTrip(S.currentTrip);
   const items=trip.days[dayIdx].items||[];
@@ -2362,6 +2528,47 @@ function deleteItem(itemId,dayIdx){
   if(isSpan)refreshAllDayRefs(trip);
   updateHeroMeta(trip);
   toastAction('Item removed','Undo',undoDelete);
+}
+
+// ── Item image: upload from file, preview, clear ──────────────────────────
+function updateImgPreview(){
+  const v=(document.getElementById('im-img').value||'').trim();
+  const img=document.getElementById('im-img-preview');
+  const clr=document.getElementById('im-img-clear');
+  if(!img||!clr)return;
+  if(v){img.src=v;img.style.display='block';clr.style.display='';}
+  else{img.removeAttribute('src');img.style.display='none';clr.style.display='none';}
+}
+function clearItemImage(){
+  document.getElementById('im-img').value='';
+  const f=document.getElementById('im-img-file');if(f)f.value='';
+  updateImgPreview();
+}
+function handleItemImageUpload(input){
+  const file=input.files&&input.files[0];
+  if(!file)return;
+  if(!file.type||!file.type.startsWith('image/')){toast('Please choose an image file');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const img=new Image();
+    img.onload=()=>{
+      const MAX=1000; // longest edge in px
+      let w=img.width,h=img.height;
+      if(w>MAX||h>MAX){const s=MAX/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
+      const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+      canvas.getContext('2d').drawImage(img,0,0,w,h);
+      let dataUrl;
+      try{dataUrl=canvas.toDataURL('image/jpeg',0.72);}
+      catch(err){toast('Could not process image');return;}
+      document.getElementById('im-img').value=dataUrl;
+      updateImgPreview();
+      toast('Photo added ✓');
+    };
+    img.onerror=()=>toast('Could not read image');
+    img.src=e.target.result;
+  };
+  reader.onerror=()=>toast('Could not read file');
+  reader.readAsDataURL(file);
 }
 
 // Auto-populate maps hint on address input

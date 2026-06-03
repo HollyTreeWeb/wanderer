@@ -1,6 +1,6 @@
 /* Wanderer service worker — offline app shell + map tile caching.
    Bump CACHE on each deploy to force clients to pick up new files. */
-const CACHE = 'wanderer-v2.0.0';
+const CACHE = 'wanderer-v2.2.0';
 const TILE_CACHE = 'wanderer-tiles-v1';
 
 // Files that make up the app shell. allSettled so one 404 won't abort install.
@@ -40,7 +40,7 @@ self.addEventListener('fetch', e => {
 
   // Dynamic data APIs: never intercept — always hit the network so sync,
   // geocoding and exchange rates are never served stale.
-  if (/(api\.github\.com|nominatim\.openstreetmap\.org|api\.frankfurter\.app)/.test(url.host)) {
+  if (/(api\.github\.com|nominatim\.openstreetmap\.org|api\.frankfurter\.app|api\.open-meteo\.com)/.test(url.host)) {
     return;
   }
 
