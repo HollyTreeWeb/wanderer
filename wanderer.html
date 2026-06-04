@@ -3601,7 +3601,11 @@ async function syncPull(silent=false){
     // Merge the email-import inbox (independent of trip-data timestamp logic)
     try{
       const inboxRaw=gist.files?.['wanderer-inbox.json']?.content;
-      if(inboxRaw){const ib=JSON.parse(inboxRaw); if(ib&&Array.isArray(ib.drafts)) mergeInbox(ib.drafts);}
+      if(inboxRaw){const ib=JSON.parse(inboxRaw);
+        // pull in any "done" markers from other devices so confirmed drafts aren't resurrected
+        if(ib&&Array.isArray(ib.done)){const seen=new Set(S.inboxDone||[]);S.inboxDone=S.inboxDone||[];ib.done.forEach(x=>{if(!seen.has(x)){S.inboxDone.push(x);seen.add(x);}});}
+        if(ib&&Array.isArray(ib.drafts)) mergeInbox(ib.drafts);
+      }
     }catch(e){}
     refreshInboxBadge();
     const raw=gist.files?.['wanderer-data.json']?.content;
