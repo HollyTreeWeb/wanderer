@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta http-equiv="cache-control" content="no-cache, must-revalidate">
-<meta name="version" content="2.3">
+<meta name="version" content="2.4">
 <title>Wanderer — Travel Planner</title>
 <!-- PWA -->
 <meta name="theme-color" content="#2563EB">
@@ -613,7 +613,7 @@ textarea{resize:vertical}
       <button class="btn btn-danger btn-sm" onclick="syncForceReload()" title="Ignore timestamps and load whatever is in the Gist right now">⬇️ Force reload from cloud</button>
       <button class="btn btn-primary" onclick="saveSyncConfig()">Save &amp; Sync now</button>
     </div>
-    <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v2.3 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
+    <div style="text-align:center;padding:8px 0 4px;font-size:11px;color:var(--muted)">Wanderer v2.4 · <a href="https://support.apple.com/en-gb/guide/safari/iph42ab2f3a7/ios" target="_blank" style="color:var(--muted)">How to refresh on mobile →</a></div>
     <div id="storage-info" style="text-align:center;font-size:11px;color:var(--muted);padding-bottom:8px"></div>
   </div>
 </div>
@@ -835,6 +835,14 @@ textarea{resize:vertical}
 </div>
 
 <button class="fab" id="fab" onclick="openItemModal(null)" title="Add item to this trip">+ Add Item</button>
+<!-- Saved email viewer -->
+<div class="overlay" id="mailview-modal">
+  <div class="modal modal-wide" style="height:90vh;display:flex;flex-direction:column;max-width:760px">
+    <div class="modal-head"><h2>Saved email</h2><button class="modal-close" onclick="closeMailView()">✕</button></div>
+    <iframe id="mailview-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" style="flex:1;border:none;width:100%;background:#fff;border-radius:0 0 18px 18px"></iframe>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -939,11 +947,13 @@ function getType(id){return TYPES.find(t=>t.id===id)||TYPES[5]}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function safeUrl(u){return/^https?:\/\//i.test(u||'')?u:'#'}
 function mapsUrl(addr){return`https://maps.google.com/?q=${encodeURIComponent(addr)}`}
+function isEmailDoc(d){return d&&/\.html?$/i.test(d.filename||'');}
 function docChip(docs){
   if(!docs||!docs.length)return'';
   const n=docs.length;
   if(n===1){
-    return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="openDoc('${docs[0].id}')" title="View document">📎 1 doc</span>`;
+    const label=isEmailDoc(docs[0])?'📄 Email copy':'📎 1 doc';
+    return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="openDoc('${docs[0].id}')" title="View document">${label}</span>`;
   }
   return`<span class="chip" style="background:#F5F3FF;color:#7C3AED;cursor:pointer" onclick="switchTab('docs')" title="View ${n} documents">📎 ${n} docs</span>`;
 }
@@ -1028,16 +1038,39 @@ function docSave(d){
   return true; // IDB never hits localStorage quota
 }
 function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
+// Find a document's metadata (filename etc.) by id across all trips
+function docMetaById(id){
+  for(const t of (S.trips||[])){
+    for(const d of (t.docs||[])) if(d.id===id) return d;
+    for(const day of (t.days||[])) for(const it of (day.items||[])) for(const d of (it.docs||[])) if(d.id===id) return d;
+  }
+  return null;
+}
 function openDoc(docId){
   const b64=docStore()[docId];
   if(!b64){toast('Document not found — try syncing again');return;}
   try{
-    const bin=atob(b64);const bytes=new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const bin=atob(b64);const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+    if(isEmailDoc(docMetaById(docId))){
+      // saved email copy — render the HTML in a sandboxed in-app viewer (works offline / iOS)
+      openMailView(new TextDecoder('utf-8').decode(bytes));
+      return;
+    }
     const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
     window.open(url,'_blank');
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   }catch(e){toast('Could not open document');}
+}
+// HTML helpers for saved email copies
+function htmlToB64(html){const bytes=new TextEncoder().encode(html);let bin='';bytes.forEach(b=>bin+=String.fromCharCode(b));return btoa(bin);}
+function openMailView(html){
+  const f=document.getElementById('mailview-frame');
+  f.srcdoc=html;
+  document.getElementById('mailview-modal').classList.add('open');
+}
+function closeMailView(){
+  document.getElementById('mailview-modal').classList.remove('open');
+  document.getElementById('mailview-frame').srcdoc='';
 }
 function cleanOrphanDocs(){
   const used=new Set();
@@ -2797,7 +2830,10 @@ function renderDraftCard(draft){
     </div>
     ${routeHTML}
     <div class="draft-foot">
-      <div class="left">${draft.parserNotes?`<span style="font-size:12px;color:var(--muted)">📝 ${esc(draft.parserNotes)}</span>`:''}</div>
+      <div class="left">
+        ${draft.source&&draft.source.bodyHtml?`<label class="draft-savecopy"><input type="checkbox" id="df-${id}-savecopy"> Save a copy <span style="opacity:.7">(for offline / phone)</span></label>`:''}
+        ${draft.parserNotes?`<span style="font-size:12px;color:var(--muted)">📝 ${esc(draft.parserNotes)}</span>`:''}
+      </div>
       <button class="btn btn-ghost btn-sm" onclick="discardDraft('${id}')">Discard</button>
       <button class="btn btn-primary btn-sm" onclick="confirmDraft('${id}')">Confirm & file</button>
     </div>
@@ -2806,18 +2842,37 @@ function renderDraftCard(draft){
 
 function getDraft(id){return (S.inbox||[]).find(d=>d.draftId===id);}
 
+// Build the final item from a draft: parsed fields + email link/meta + optional saved copy.
+function materializeDraftItem(draft){
+  const {item,anchor}=buildItemFromDraft(draft);
+  if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
+  if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
+  if(draft.messageId)item.messageId=draft.messageId;
+  // "Save a copy" — store the email HTML as a document on the item (syncs to all devices)
+  const cb=document.getElementById('df-'+draft.draftId+'-savecopy');
+  if(cb&&cb.checked&&draft.source&&draft.source.bodyHtml){
+    try{
+      const docId=uid();
+      const b64=htmlToB64(draft.source.bodyHtml);
+      const store=docStore();store[docId]=b64;
+      if(docSave(store)){
+        if(!item.docs)item.docs=[];
+        const subj=(draft.source.subject||'booking').replace(/[\\/:*?"<>|]+/g,' ').slice(0,50).trim();
+        item.docs.push({id:docId,filename:`Email — ${subj}.html`,size:b64.length});
+      }
+    }catch(e){toast('Could not save email copy');}
+  }
+  return {item,anchor};
+}
+
 function confirmDraft(id){
   const draft=getDraft(id);if(!draft)return;
-  const {item,anchor}=buildItemFromDraft(draft);
-  if(!item.name){toast('Give the item a name first');return;}
   let tripId=document.getElementById('df-'+id+'-trip')?.value;
   if(!tripId){const c=draftCandidateTrips(draft);if(c.length===1)tripId=c[0].id;}
   if(!tripId){toast('Pick a trip, or create one');return;}
   const trip=getTrip(tripId);if(!trip){toast('Trip not found');return;}
-  // attach email link + dedup key
-  if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
-  if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
-  if(draft.messageId)item.messageId=draft.messageId;
+  const {item,anchor}=materializeDraftItem(draft);
+  if(!item.name){toast('Give the item a name first');return;}
   fileItemIntoTrip(trip,item,anchor);
   markDraftDone(id);
   persist();
@@ -2831,12 +2886,9 @@ function confirmAllMatched(){
   let n=0;
   matched.forEach(id=>{
     const draft=getDraft(id);if(!draft)return;
-    const {item,anchor}=buildItemFromDraft(draft);
-    if(!item.name)return;
     const trip=draftCandidateTrips(draft)[0];if(!trip)return;
-    if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
-    if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
-    if(draft.messageId)item.messageId=draft.messageId;
+    const {item,anchor}=materializeDraftItem(draft);
+    if(!item.name)return;
     fileItemIntoTrip(trip,item,anchor);
     markDraftDone(id);n++;
   });
@@ -2869,10 +2921,8 @@ function createTripFromDraft(id){
   const trip={id:uid(),name,destinations:item.address||'',startDate:start,endDate:end<start?start:end,
     emoji:'🧳',palIdx:Math.floor(Math.random()*PALS.length),notes:'',homeAddress:'',travellers:[],days:[]};
   S.trips.unshift(trip);
-  if(draft.source&&draft.source.mailLink)item.mailLink=draft.source.mailLink;
-  if(draft.source)item.mailMeta={subject:draft.source.subject||'',from:draft.source.from||'',received:draft.source.received||''};
-  if(draft.messageId)item.messageId=draft.messageId;
-  fileItemIntoTrip(trip,item,anchor);
+  const m=materializeDraftItem(draft);  // builds item + link/meta + optional saved copy
+  fileItemIntoTrip(trip,m.item,m.anchor);
   markDraftDone(id);
   persist();refreshInboxBadge();renderImports();renderDashboard();
   toast(`Created “${name}” and filed the item ✓`);
